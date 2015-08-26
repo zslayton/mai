@@ -5,7 +5,7 @@ extern crate lifeguard;
 
 use std::result::Result;
 
-use mio::{Evented};
+use mio::{Evented, EventLoop, Handler};
 use mio::util::Slab;
 
 use lifeguard::{Pool, Recycleable, Recycled};
@@ -42,11 +42,10 @@ pub trait Codec<F> {
 }
 
 const BUFFER_SIZE : usize = 16 * 1_024;
-const NUMBER_OF_POOLED_BUFFERS: usize = 16 * 1_024;
 
 #[derive(Debug)]
 struct Buffer {
-  pub bytes: Vec<u8>
+  bytes: Vec<u8>
 }
 
 impl Buffer {
@@ -54,6 +53,10 @@ impl Buffer {
     Buffer {
       bytes: Vec::with_capacity(BUFFER_SIZE)
     }
+  }
+
+  pub fn bytes(&self) -> &[u8] {
+    &self.bytes
   }
 
   pub fn len(&self) -> usize {
@@ -82,6 +85,10 @@ impl Buffer {
     }
     self.bytes.truncate(num_in_use - num_consumed);
   }
+
+  pub fn extend(&mut self, bytes: &[u8]){
+    self.bytes.extend(bytes)
+  }
 }
 
 impl Recycleable for Buffer {
@@ -99,39 +106,56 @@ pub struct ByteStream<E> where E: Evented {
   buffer: Option<Buffer>
 }
 
+pub struct IoHandler {
+  dummy: usize 
+}
+
+impl Handler for IoHandler {
+  type Timeout = ();
+  type Message = (); 
+}
+
+const NUMBER_OF_POOLED_BUFFERS: usize = 16 * 1_024;
+
 pub struct StreamManager<E> where E: Evented {
-  streams: Slab<E>
+  streams: Slab<E>,
+  event_loop: EventLoop<IoHandler>,
+  buffer_pool: Pool<Buffer>
+}
+
+impl <E> StreamManager<E> where E: Evented {
+  
 }
 
 #[test]
 fn test_restack() {
   let mut buffer : Buffer = Buffer::new();
-  buffer.bytes.extend(&[0u8, 1, 2, 3, 4, 5]);
+  buffer.extend(&[0u8, 1, 2, 3, 4, 5]);
   println!("Buffer: {:?}", buffer);
   assert_eq!(6, buffer.len());
   buffer.restack(3);
   assert_eq!(3, buffer.len());
-  assert_eq!(buffer.bytes, &[3, 4, 5]);
+  assert_eq!(buffer.bytes(), &[3, 4, 5]);
 }
 
 #[test]
 fn test_restack_nothing_consumed() {
   let mut buffer : Buffer = Buffer::new();
-  buffer.bytes.extend(&[0u8, 1, 2, 3, 4, 5]);
+  buffer.extend(&[0u8, 1, 2, 3, 4, 5]);
   println!("Buffer: {:?}", buffer);
   assert_eq!(6, buffer.len());
   buffer.restack(0);
   assert_eq!(6, buffer.len());
-  assert_eq!(buffer.bytes, &[0, 1, 2, 3, 4, 5]);
+  assert_eq!(buffer.bytes(), &[0, 1, 2, 3, 4, 5]);
 }
 
 #[test]
 fn test_restack_everything_consumed() {
   let mut buffer : Buffer = Buffer::new();
-  buffer.bytes.extend(&[0u8, 1, 2, 3, 4, 5]);
+  buffer.extend(&[0u8, 1, 2, 3, 4, 5]);
   println!("Buffer: {:?}", buffer);
   assert_eq!(6, buffer.len());
   buffer.restack(6);
   assert_eq!(0, buffer.len());
-  assert_eq!(buffer.bytes, &[]);
+  assert_eq!(buffer.bytes(), &[]);
 }
