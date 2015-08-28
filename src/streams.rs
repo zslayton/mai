@@ -4,7 +4,6 @@ use lifeguard::{Pool, Recycleable, Recycled};
 
 use std::io::{Read, Write};
 
-use std::collections::BTreeMap;
 use std::result::Result;
 
 use slab::Index;
@@ -19,21 +18,22 @@ pub trait EventedByteStream : Evented + Read + Write {
   fn on_error(&mut self);
 }
 
+#[derive(Debug)]
 pub struct EventedFrameStream<E> where E: EventedByteStream {
   stream: E, 
   buffer: Option<Buffer>,
 }
 
 pub struct FrameEngineBuilder<E> where E: EventedByteStream {
-  frame_engine: FrameEngine<E>,
-  event_loop: EventLoop<FrameEngine<E>>
+  pub frame_engine: FrameEngine<E>, // TODO: make private?
+  pub event_loop: EventLoop<FrameEngine<E>>
 }
 
 pub struct FrameEngine<E> where E: EventedByteStream {
   // TODO: Add server?
-  streams: BTreeMap<Token, EventedFrameStream<E>>,
-  buffer_pool: Pool<Buffer>,
-  next_token: usize
+  pub streams: Slab<EventedFrameStream<E>>,
+  pub buffer_pool: Pool<Buffer>,
+  pub next_token: usize
 }
 
 impl <E> FrameEngineBuilder<E> where E: EventedByteStream {
@@ -44,24 +44,26 @@ impl <E> FrameEngineBuilder<E> where E: EventedByteStream {
    Index::from_usize(token)
  }
     
- pub fn manage(&mut self, evented_byte_stream: E) -> Result<Token, E> {
+ // TODO: This should return a Result
+ pub fn manage(&mut self, evented_byte_stream: E) {
     let evented_frame_stream = EventedFrameStream {
       stream: evented_byte_stream,
       buffer: None
     };
-    let token = self.get_next_token();
-    try!(self.event_loop.register(&evented_frame_stream.stream, token.clone()));
-    self.frame_engine.streams.insert(token, evented_frame_stream);
-    Ok(token)
+    // Store new stream, get token to use
+    let token = match self.frame_engine.streams.insert(evented_frame_stream) {
+      Ok(token) => token,
+      _ => return
+    };
+    let efs_ref: &EventedFrameStream<E> = self.frame_engine.streams.get(token).unwrap();
+    //TODO: Handle error?
+    let _ = self.event_loop.register(&efs_ref.stream, token).unwrap();
   }
 
   pub fn run(self) {
     let mut event_loop: EventLoop<FrameEngine<E>> = self.event_loop;
     let mut frame_engine : FrameEngine<E> = self.frame_engine;
-    for (token, evented_frame_stream) in &self.streams {
-      event_loop.register(&evented_frame_stream, token);
-    }
-    let _ = event_loop.run(self); 
+    let _ = event_loop.run(&mut frame_engine); 
   }
 }
 

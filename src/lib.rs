@@ -15,7 +15,7 @@ pub use streams::FrameEngineBuilder;
 pub use streams::EventedByteStream;
 
 use mio::{Evented, EventLoop};
-use std::collections::BTreeMap;
+use mio::util::Slab;
 use lifeguard::Pool;
 
 const BUFFER_POOL_SIZE: usize = 16;
@@ -23,7 +23,7 @@ const BUFFER_POOL_SIZE: usize = 16;
 pub fn frame_engine<E>(max_streams: usize) -> FrameEngineBuilder<E> where E: EventedByteStream {
   FrameEngineBuilder {
     frame_engine: FrameEngine {
-      streams: BTreeMap::new(),
+      streams: Slab::new(max_streams),
       buffer_pool: Pool::with_size_and_max(BUFFER_POOL_SIZE, BUFFER_POOL_SIZE),
       next_token: 0
     },
