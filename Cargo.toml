@@ -6,3 +6,4 @@ authors = ["Zack Slayton <zslayton@us.ibm.com>"]
 [dependencies]
 lifeguard="0.3"
 mio="0.4"
+slab="0.1"

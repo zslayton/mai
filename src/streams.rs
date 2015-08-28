@@ -7,6 +7,8 @@ use std::io::{Read, Write};
 use std::collections::BTreeMap;
 use std::result::Result;
 
+use slab::Index;
+
 use Buffer;
 
 //TODO: Provide impl for T where T: Evented + Read + Write
@@ -36,10 +38,10 @@ pub struct FrameEngine<E> where E: EventedByteStream {
 
 impl <E> FrameEngineBuilder<E> where E: EventedByteStream {
 
- fn get_next_token(&mut self) {
+ fn get_next_token(&mut self) -> Token {
    let token = self.frame_engine.next_token;
    self.frame_engine.next_token += 1;
-   token
+   Index::from_usize(token)
  }
     
  pub fn manage(&mut self, evented_byte_stream: E) -> Result<Token, E> {
@@ -48,8 +50,9 @@ impl <E> FrameEngineBuilder<E> where E: EventedByteStream {
       buffer: None
     };
     let token = self.get_next_token();
-    let token = try!(self.event_loop.register(&evented_frame_stream, token.clone()));
-    self.streams.insert(token, evented_frame_stream);
+    try!(self.event_loop.register(&evented_frame_stream.stream, token.clone()));
+    self.frame_engine.streams.insert(token, evented_frame_stream);
+    Ok(token)
   }
 
   pub fn run(self) {

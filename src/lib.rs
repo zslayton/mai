@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 extern crate mio;
+extern crate slab;
 extern crate lifeguard;
 
 pub mod codec;
