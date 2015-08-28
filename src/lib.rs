@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+#[macro_use]
+extern crate log;
 extern crate mio;
 extern crate slab;
 extern crate lifeguard;
@@ -14,7 +16,7 @@ pub use streams::FrameEngine;
 pub use streams::FrameEngineBuilder;
 pub use streams::EventedByteStream;
 
-use mio::{Evented, EventLoop};
+use mio::{EventLoop};
 use mio::util::Slab;
 use lifeguard::Pool;
 

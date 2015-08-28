@@ -1,10 +1,8 @@
-use mio::{Evented, EventLoop, Handler, Token};
+use mio::{Evented, EventSet, EventLoop, Handler, Token};
 use mio::util::Slab;
-use lifeguard::{Pool, Recycleable, Recycled};
+use lifeguard::{Pool, RcRecycled};
 
 use std::io::{Read, Write};
-
-use std::result::Result;
 
 use slab::Index;
 
@@ -18,10 +16,29 @@ pub trait EventedByteStream : Evented + Read + Write {
   fn on_error(&mut self);
 }
 
+impl <T> EventedByteStream for T where T: Evented + Read + Write {
+  fn on_ready(&mut self) {
+    debug!("Impl ready");
+  }
+
+  fn on_readable_bytes(&mut self, buffer: &mut Buffer) {
+    debug!("Impl ready");
+  }
+
+  fn on_writable_bytes(&mut self, buffer: &Buffer) {
+    debug!("Impl ready");
+  }
+
+  fn on_error(&mut self) {
+    debug!("Impl ready");
+  }
+}
+
 #[derive(Debug)]
 pub struct EventedFrameStream<E> where E: EventedByteStream {
   stream: E, 
-  buffer: Option<Buffer>,
+  // TODO: Could be Option<Recycled<'a, Buffer>> with lifetimes
+  buffer: Option<RcRecycled<Buffer>>,
 }
 
 pub struct FrameEngineBuilder<E> where E: EventedByteStream {
@@ -69,6 +86,22 @@ impl <E> FrameEngineBuilder<E> where E: EventedByteStream {
 
 impl <E> Handler for FrameEngine<E> where E: Evented {
   type Timeout = ();
-  type Message = (); 
+  type Message = ();
+
+  fn ready(&mut self, event_loop: &mut EventLoop<Self>, token: Token, event_set: EventSet) {
+    debug!("Token={:?} ready, EventSet={:?}", token, event_set);
+  }
+
+  fn notify(&mut self, event_loop: &mut EventLoop<Self>, message: Self::Message) {
+    debug!("Notify called, Message={:?}", message); 
+  }
+
+  fn timeout(&mut self, event_loop: &mut EventLoop<Self>, timeout: Self::Timeout) {
+    debug!("Timeout called, Timeout={:?}", timeout);
+  }
+
+  fn interrupted(&mut self, event_loop: &mut EventLoop<Self>) {
+    debug!("Interrupted");
+  }
 }
 

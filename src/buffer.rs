@@ -1,7 +1,4 @@
-use mio::{Evented, EventLoop, Handler};
-use mio::util::Slab;
-
-use lifeguard::{Pool, Recycleable, Recycled};
+use lifeguard::{Recycleable};
 
 const BUFFER_SIZE : usize = 16 * 1_024;
 
