@@ -39,7 +39,7 @@ impl Buffer {
   }
 
   pub fn reset(&mut self) {
-    debug!("Resetting buffer.");
+    debug!("Resetting buffer, clearing {} bytes", self.in_use);
     self.in_use = 0;
   }
 

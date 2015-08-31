@@ -1,10 +1,10 @@
 use std::result::Result;
 
-pub struct BytesConsumed(usize);
-pub struct BytesProduced(usize);
+pub struct BytesRead(pub usize);
+pub struct BytesWritten(pub usize);
 
 pub enum DecodingError {
-  InvalidFrame(BytesConsumed),
+  InvalidFrame(BytesRead),
   IncompleteFrame
 }
 
@@ -14,19 +14,25 @@ pub enum EncodingError {
 }
 
 pub struct DecodedFrame<F> {
-  frame: F,
-  bytes_consumed: BytesConsumed
+  pub frame: F,
+  pub bytes_read: BytesRead
 }
 
-pub struct EncodedFrame<F> {
-  frame: F,
-  bytes_produced: BytesProduced
+impl <F> DecodedFrame<F> {
+  pub fn new(frame: F, bytes_read: BytesRead) -> DecodedFrame<F> {
+    DecodedFrame {
+      frame: frame,
+      bytes_read: bytes_read
+    }
+  }
 }
 
-pub type DecodingResult<F> = Result<Option<DecodedFrame<F>>, DecodingError>;
-pub type EncodingResult<F> = Result<Option<EncodedFrame<F>>, EncodingError>;
+// No need for EncodedFrame type yet (ever?)
+
+pub type DecodingResult<F> = Result<DecodedFrame<F>, DecodingError>;
+pub type EncodingResult = Result<BytesWritten, EncodingError>;
 
 pub trait Codec<F> {
-  fn encode(&mut self, &mut [u8]) -> EncodingResult<F>;
+  fn encode(&mut self, frame: &F, &mut [u8]) -> EncodingResult;
   fn decode(&mut self, &[u8]) -> DecodingResult<F>;
 }
