@@ -1,10 +1,18 @@
 use lifeguard::{Recycleable};
+use std::fmt;
 
 const BUFFER_SIZE : usize = 16 * 1_024;
 
-#[derive(Debug)]
 pub struct Buffer {
-  bytes: Vec<u8>
+  //bytes: Vec<u8>
+  bytes: Box<[u8]>,
+  in_use: usize
+}
+
+impl fmt::Debug for Buffer {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "Buffer{{len={:?}, bytes={:?}}}", self.len(), self.bytes())
+  }
 }
 
 impl Recycleable for Buffer {
@@ -13,23 +21,61 @@ impl Recycleable for Buffer {
   }
 
   fn reset(&mut self) {
-    self.bytes.reset();
+    //self.bytes.reset();
+    self.reset();
   }
 }
 
 impl Buffer {
   pub fn new() -> Buffer {
+    let bytes = (0..BUFFER_SIZE)
+        .map(|_| 0u8)
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
     Buffer {
-      bytes: Vec::with_capacity(BUFFER_SIZE)
+      bytes: bytes, 
+      in_use: 0
+    }
+  }
+
+  pub fn reset(&mut self) {
+    debug!("Resetting buffer.");
+    self.in_use = 0;
+  }
+
+  pub fn push(&mut self, byte: u8) {
+    self.bytes[self.in_use] = byte;
+    self.in_use += 1;
+  }
+
+  pub fn extend(&mut self, bytes: &[u8]) {
+    for &byte in bytes {
+      self.push(byte)
     }
   }
 
   pub fn bytes(&self) -> &[u8] {
-    &self.bytes
+    &self.bytes[0..self.in_use]
+  }
+
+  pub fn remaining(&mut self) -> &mut [u8] {
+    &mut self.bytes[self.in_use..]
+  }
+
+  pub fn add_to_byte_count(&mut self, bytes_read: usize) {
+    self.in_use += bytes_read;
+  }
+
+  pub fn truncate(&mut self, size: usize) {
+    use std::cmp;
+    if size > self.len() {
+      panic!("Cannot truncate to {} bytes. Buffer is only {} bytes long.", size, self.len());
+    }
+    self.in_use = cmp::min(size, self.len());
   }
 
   pub fn len(&self) -> usize {
-    self.bytes.len()
+    self.in_use 
   }
 
   pub fn restack(&mut self, num_consumed : usize) {
@@ -40,23 +86,16 @@ impl Buffer {
     }
     // If everything was consumed, empty the buffer and return
     if num_consumed == num_in_use {
-      self.bytes.reset();
+      self.reset();
       return;
     }
     // Otherwise, shift the remaining bytes as far left as possible
-    // [ 0, 1, 2, 3, 4, 5 ]
-    println!("num_in_use  : {}", num_in_use);
-    println!("num_consumed: {}", num_consumed);
     for i in num_consumed..num_in_use {
       let (left, right) = self.bytes.split_at_mut(i);
       println!("i={}, left={:?}, right={:?}", i, left, right);
       left[i-num_consumed] = right[0];
     }
-    self.bytes.truncate(num_in_use - num_consumed);
-  }
-
-  pub fn extend(&mut self, bytes: &[u8]){
-    self.bytes.extend(bytes)
+    self.truncate(num_in_use - num_consumed);
   }
 }
 
