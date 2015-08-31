@@ -6,7 +6,7 @@ use mio::tcp::{TcpSocket, TcpStream};
 
 fn main() {
   env_logger::init().unwrap();
-  println!("Connecting...");
+  println!("Connecting to localhost:9999...");
   let address = "0.0.0.0:9999".parse().unwrap();
   let socket = TcpSocket::v4().unwrap();
   let (stream, _complete) = socket.connect(&address).unwrap();

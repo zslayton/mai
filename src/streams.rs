@@ -12,7 +12,7 @@ use Buffer;
 pub trait EventedByteStream : Evented + Read + Write {
   fn on_ready(&mut self);
   fn on_readable(&mut self, &mut Buffer) -> io::Result<usize>;
-  fn on_writable(&mut self, &Buffer) -> io::Result<usize>;
+  fn on_writable(&mut self, &mut Buffer) -> io::Result<usize>;
   fn on_hup(&mut self);
   fn on_error(&mut self);
 }
@@ -27,6 +27,7 @@ impl <T> EventedByteStream for T where T: Evented + Read + Write {
     buffer.truncate(0);
     let mut total_bytes_read: usize = 0;
     loop {
+      buffer.set_size(total_bytes_read);
       let raw_buffer: &mut [u8] = buffer.remaining();
       if raw_buffer.len() == 0 {
         debug!("Buffer is full. Yielding.");
@@ -36,23 +37,48 @@ impl <T> EventedByteStream for T where T: Evented + Read + Write {
       match self.read(raw_buffer) {
         Ok(bytes_read) => {
           debug!("Read {} bytes", bytes_read);
+          if bytes_read == 0 {
+            return Ok(total_bytes_read);
+          }
           total_bytes_read += bytes_read;
         },
         Err(error) => {
           if error.kind() == ErrorKind::WouldBlock {
             debug!("Read error WouldBlock, yielding.");
+            return Ok(total_bytes_read);
+          }
+          debug!("A differeng kind of error happened: {:?}", error);
+          return Err(error);
+        }
+      }
+    }
+  }
+
+  fn on_writable(&mut self, buffer: &mut Buffer) -> io::Result<usize> {
+    debug!("EventedByteStream writable");
+    let mut total_bytes_written: usize = 0;
+    loop {
+      let working_buffer: &[u8] = &buffer.bytes()[total_bytes_written..];
+      if working_buffer.len() == 0 {
+        debug!("Buffer is empty. Yielding.");
+        break;
+      }
+      match self.write(working_buffer) {
+        Ok(bytes_written) => {
+          debug!("Wrote {} bytes", bytes_written);
+          total_bytes_written += bytes_written;
+        },
+        Err(error) => {
+          if error.kind() == ErrorKind::WouldBlock {
+            debug!("Write error WouldBlock, yielding.");
             break;
           }
           return Err(error);
         }
       }
     }
-    Ok(total_bytes_read)
-  }
-
-  fn on_writable(&mut self, buffer: &Buffer) -> io::Result<usize> {
-    debug!("EventedByteStream writable");
-    Ok(0)
+    buffer.restack(total_bytes_written);
+    return Ok(total_bytes_written);
   }
   
   fn on_hup(&mut self) {
@@ -99,12 +125,6 @@ pub struct FrameEngine<E> where E: EventedByteStream {
 
 impl <E> FrameEngineBuilder<E> where E: EventedByteStream {
 
- fn get_next_token(&mut self) -> Token {
-   let token = self.frame_engine.next_token;
-   self.frame_engine.next_token += 1;
-   Index::from_usize(token)
- }
-    
  // TODO: This should return a Result
  pub fn manage(&mut self, evented_byte_stream: E) {
     let evented_frame_stream = EventedFrameStream {
@@ -144,28 +164,28 @@ impl <E> Handler for FrameEngine<E> where E: EventedByteStream {
     { // Extra scope to get around lexical borrows
       let efs: &mut EventedFrameStream<E> = self.streams.get_mut(token).unwrap();
 
-      if event_set.is_readable() {
-        let read_buffer = efs.read_buffer
-            .take()
-            .or_else(|| Some(tmp_read_buffer))
-            .unwrap();
-  //      self.read(event_loop, token, efs);
-      }
-
       if event_set.is_writable() {
-        let write_buffer = efs.write_buffer
+        let mut write_buffer = efs.write_buffer
             .take()
             .or_else(|| Some(tmp_write_buffer))
             .unwrap();
-  //      self.write(event_loop, token, efs);
+        FrameEngine::write(event_loop, token, efs, &mut write_buffer);
+      }
+
+      if event_set.is_readable() {
+        let mut read_buffer = efs.read_buffer
+            .take()
+            .or_else(|| Some(tmp_read_buffer))
+            .unwrap();
+        FrameEngine::read(event_loop, token, efs, &mut read_buffer);
       }
 
       if event_set.is_hup() {
-//       self.hup(event_loop, token, efs);
+        FrameEngine::hup(event_loop, token, efs);
       }
 
       if event_set.is_error() {
-//        self.error(event_loop, token, efs);
+        FrameEngine::error(event_loop, token, efs);
       }
 
       updated_state = efs.state;
@@ -192,31 +212,25 @@ impl <E> Handler for FrameEngine<E> where E: EventedByteStream {
 }
 
 impl <E> FrameEngine<E> where E: EventedByteStream {
-  fn byte_stream_is_ready(&mut self, 
-           token: Token, 
-           efs: &mut EventedFrameStream<E>
-          ) {
-    debug!("EventedByteStream for Token={:?} is Ready", token);
-    efs.state = Ready;
-    efs.stream.on_ready();
-  }
 
-  fn read(&mut self, 
-           event_loop: &mut EventLoop<Self>, 
+  fn read( event_loop: &mut EventLoop<Self>, 
            token: Token, 
-           efs: &mut EventedFrameStream<E>
+           efs: &mut EventedFrameStream<E>,
+           buffer: &mut Buffer
           ) {
     match efs.state {
       NotReady => { // The 'readable' event signals a fully connected socket
-        self.byte_stream_is_ready(token, efs);
+        debug!("Stream for Token={:?} is Ready.", token);
+        efs.state = Ready;
+        efs.stream.on_ready();
+        FrameEngine::read_while_nonblocking(efs, buffer);
         // No need to read; we're using level triggering so this
         // will be called again with the state modified
       },
       Ready => {
         // TODO: See if it already has a buffer
-        let buffer: &mut RcRecycled<Buffer> = &mut self.buffer_pool.new_rc();
-        efs.stream.on_readable(buffer);
-        event_loop.shutdown();
+        debug!("Stream for Token={:?} can be read.", token);
+        FrameEngine::read_while_nonblocking(efs, buffer);
       },
       Done => {
         debug!("'Readable' event on 'Done' stream. Token={:?}", token); 
@@ -224,20 +238,36 @@ impl <E> FrameEngine<E> where E: EventedByteStream {
     }
   }
 
-  fn write(&mut self, 
-           event_loop: &mut EventLoop<Self>, 
+  fn read_while_nonblocking(efs: &mut EventedFrameStream<E>,
+                           buffer: &mut Buffer) {
+    use std::str;
+    match efs.stream.on_readable(buffer) {
+      Ok(bytes_read) => {
+        let message : &str = str::from_utf8(buffer.bytes()).unwrap();
+        debug!("Read {} bytes: '{}'", bytes_read, message);
+      },
+      Err(error) => {
+        debug!("Encountered an error: {:?}", error);
+      }
+    }
+  }
+
+  fn write(event_loop: &mut EventLoop<Self>, 
            token: Token, 
-           efs: &mut EventedFrameStream<E>
+           efs: &mut EventedFrameStream<E>,
+           buffer: &mut Buffer
           ) {
     match efs.state {
       NotReady => { // The 'writable' event signals a fully connected socket
-        self.byte_stream_is_ready(token, efs);
+        debug!("Stream for Token={:?} is Ready.", token);
+        efs.state = Ready;
+        efs.stream.on_ready();
         // No need to write; we're using level triggering so this
         // will be called again with the state modified
       },
       Ready => {
         // TODO: See if it already has a buffer
-        efs.stream.on_writable(&self.buffer_pool.new());
+        efs.stream.on_writable(buffer);
       },
       Done => {
         debug!("'Writable' event on 'Done' stream. Token={:?}", token); 
@@ -245,17 +275,16 @@ impl <E> FrameEngine<E> where E: EventedByteStream {
     }
   }
 
-  fn hup(&mut self, 
-           event_loop: &mut EventLoop<Self>, 
+  fn hup(event_loop: &mut EventLoop<Self>, 
            token: Token, 
            efs: &mut EventedFrameStream<E>
-          ) {
+         ) {
       debug!("'Hup' event on '{:?}' stream. Token={:?}", efs.state, token); 
       efs.state = Done;
+      event_loop.shutdown();
   }
 
-  fn error(&mut self, 
-           event_loop: &mut EventLoop<Self>, 
+  fn error(event_loop: &mut EventLoop<Self>, 
            token: Token, 
            efs: &mut EventedFrameStream<E>
           ) {

@@ -62,8 +62,8 @@ impl Buffer {
     &mut self.bytes[self.in_use..]
   }
 
-  pub fn add_to_byte_count(&mut self, bytes_read: usize) {
-    self.in_use += bytes_read;
+  pub fn set_size(&mut self, size: usize) {
+    self.in_use = size;
   }
 
   pub fn truncate(&mut self, size: usize) {
