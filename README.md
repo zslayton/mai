@@ -39,7 +39,8 @@ impl Codec<String> for EchoCodec {
     // Validate that the buffer contains a utf-8 String
     let message: String = match str::from_utf8(buffer) {
       Ok(message) => message.to_owned(),
-      // For this example, assume invalid messages means that we just don't have enough bytes yet
+      // For this example, assume invalid messages means 
+      // that we just don't have enough bytes yet
       Err(error) => return Err(DecodingError::IncompleteFrame)
     };
     Ok(DecodedFrame::new(message, BytesRead(buffer.len())))
