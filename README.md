@@ -5,7 +5,9 @@ on sending and receiving your protocol's frames.
 ## Status
 Currently pre-alpha. Basic I/O and buffering are in place, but the API is in flux and error handling needs work.
 
-## Codec
+## An Echo Client example
+
+### Codec
 Define methods to encode and decode your frames. Use the return codes to indicate that you got a frame, don't have enough bytes to read a frame yet or that you encountered a protocol error.
 
 ```rust
@@ -13,7 +15,8 @@ use mai::codec::*;
 
 struct EchoCodec;
 
-// For a simple Echo server, we can use `String` as our Frame type
+// For a simple Echo server, we can use `String` as our Frame type.
+// This codec would work for both a client and server connection.
 impl Codec<String> for EchoCodec {
   // Provide a method to write a given frame to a byte buffer
   fn encode(&mut self, message: &String, buffer: &mut [u8]) -> EncodingResult {
@@ -44,7 +47,7 @@ impl Codec<String> for EchoCodec {
 }
 ```
 
-## FrameHandler
+### FrameHandler
 Define callbacks to handle frames that have been received and be notified that frames were successfully written.
 ```rust
 use mai::FrameHandler;
@@ -63,7 +66,7 @@ impl FrameHandler<String> for EchoFrameHandler {
 }
 ```
 
-## Get to work
+### Get to work
 Create a `FrameEngine` and hand it any `mio` type that is `Evented`+`Read`+`Write`. Watch it go!
 ```rust
 extern crate mio;
