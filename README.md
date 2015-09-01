@@ -80,11 +80,13 @@ fn main() {
   
   let mut frame_engine = mai::frame_engine(EchoCodec, EchoFrameHandler);
   
+  // Connect to an echo server running on our machine
   println!("Connecting to 0.0.0.0:9999...");
   let address = "0.0.0.0:9999".parse().unwrap();
   let socket = TcpSocket::v4().unwrap();
   let (stream, _complete) = socket.connect(&address).unwrap();
   
+  // And away we go!
   frame_engine.manage(stream);
   frame_engine.run();
 }
