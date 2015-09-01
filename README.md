@@ -84,4 +84,5 @@ fn main() {
   
   frame_engine.manage(stream);
   frame_engine.run();
+}
 ```
