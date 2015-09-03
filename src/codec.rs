@@ -1,13 +1,17 @@
 use std::result::Result;
 
+#[derive(Debug)]
 pub struct BytesRead(pub usize);
+#[derive(Debug)]
 pub struct BytesWritten(pub usize);
 
+#[derive(Debug)]
 pub enum DecodingError {
   InvalidFrame(BytesRead),
   IncompleteFrame
 }
 
+#[derive(Debug)]
 pub enum EncodingError {
   InvalidFrame,
   InsufficientBufferSize

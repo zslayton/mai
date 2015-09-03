@@ -50,6 +50,7 @@ fn main() {
   let (stream, _complete) = socket.connect(&address).unwrap();
   
   let mut frame_engine = mai::frame_engine(EchoCodec, EchoFrameHandler);
-  frame_engine.manage(stream);
+  let token = frame_engine.manage(stream);
+  frame_engine.send(token, "supercalifragilisticexpialidocious\n".to_owned());
   frame_engine.run();
 }

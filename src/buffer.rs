@@ -79,6 +79,7 @@ impl Buffer {
   }
 
   pub fn restack(&mut self, num_consumed : usize) {
+    debug!("Restacking buffer");
     let num_in_use = self.len();
     // If nothing was consumed, we're done
     if num_consumed == 0 {
