@@ -157,6 +157,7 @@ impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
 //TODO: Configurable
 const BUFFER_POOL_SIZE: usize = 16;
 const OUTBOX_POOL_SIZE: usize = 16;
+
 const MAX_STREAMS: usize = 1_024;
 
 impl <E, F, C, H> FrameEngine<E, F, C, H> where

@@ -13,12 +13,11 @@ pub trait EventedByteStream : Evented + Read + Write {
 
 impl <T> EventedByteStream for T where T: Evented + Read + Write {
   fn on_ready(&mut self) {
-    debug!("EventedByteStream ready");
+    debug!("EventedByteStream is now ready");
   }
 
   fn on_readable(&mut self, buffer: &mut Buffer) -> io::Result<usize> {
-    debug!("EventedByteStream readable");
-    buffer.truncate(0);//TODO: This can't be right.
+    debug!("Reading from EventedByteStream");
     let mut total_bytes_read: usize = 0;
     loop {
       buffer.set_size(total_bytes_read);
@@ -27,7 +26,7 @@ impl <T> EventedByteStream for T where T: Evented + Read + Write {
         debug!("Buffer is full. Yielding.");
         return Ok(total_bytes_read);
       }
-      debug!("Reading from EventedByteStream, {} bytes free", raw_buffer.len());
+      debug!("Invoking read(), buffer has {} bytes free", raw_buffer.len());
       match self.read(raw_buffer) {
         Ok(bytes_read) => {
           debug!("Read {} bytes", bytes_read);
