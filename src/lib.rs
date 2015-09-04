@@ -8,21 +8,22 @@ extern crate lifeguard;
 
 pub mod codec;
 pub mod buffer;
-pub mod streams;
+pub mod frame_engine;
+pub mod evented_byte_stream;
+pub mod evented_frame_stream;
+pub mod frame_handler;
 
 pub use buffer::Buffer;
-pub use streams::FrameEngine;
-pub use streams::FrameHandler;
-pub use streams::FrameEngineBuilder;
-pub use streams::EventedByteStream;
+pub use frame_handler::FrameHandler;
+pub use evented_byte_stream::EventedByteStream;
+pub use evented_frame_stream::EventedFrameStream;
+pub use evented_frame_stream::StreamState;
+pub use evented_frame_stream::Outbox;
+pub use frame_engine::FrameEngineBuilder;
+pub use frame_engine::FrameEngine;
+pub use codec::Codec;
 
-use mio::{EventLoop};
-use mio::util::Slab;
-use lifeguard::Pool;
-
-use codec::Codec;
-
-use std::marker::PhantomData;
+use mio::EventLoop;
 
 pub fn frame_engine<E, F, C, H>(codec: C, frame_handler: H) -> FrameEngineBuilder<E, F, C, H> where
   E: EventedByteStream,

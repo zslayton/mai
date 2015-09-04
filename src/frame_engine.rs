@@ -9,122 +9,14 @@ use std::collections::VecDeque;
 
 use slab::Index;
 
-use self::StreamState::*;
+use EventedFrameStream;
+use EventedByteStream;
+use FrameHandler;
+use StreamState;
+use StreamState::*;
+use Outbox;
 use Buffer;
 use codec::*;
-
-pub trait EventedByteStream : Evented + Read + Write {
-  fn on_ready(&mut self);
-  fn on_readable(&mut self, &mut Buffer) -> io::Result<usize>;
-  fn on_writable(&mut self, &mut Buffer) -> io::Result<usize>;
-  fn on_hup(&mut self);
-  fn on_error(&mut self);
-}
-
-impl <T> EventedByteStream for T where T: Evented + Read + Write {
-  fn on_ready(&mut self) {
-    debug!("EventedByteStream ready");
-  }
-
-  fn on_readable(&mut self, buffer: &mut Buffer) -> io::Result<usize> {
-    debug!("EventedByteStream readable");
-    buffer.truncate(0);//TODO: This can't be right.
-    let mut total_bytes_read: usize = 0;
-    loop {
-      buffer.set_size(total_bytes_read);
-      let raw_buffer: &mut [u8] = buffer.remaining();
-      if raw_buffer.len() == 0 {
-        debug!("Buffer is full. Yielding.");
-        return Ok(total_bytes_read);
-      }
-      debug!("Reading from EventedByteStream, {} bytes free", raw_buffer.len());
-      match self.read(raw_buffer) {
-        Ok(bytes_read) => {
-          debug!("Read {} bytes", bytes_read);
-          if bytes_read == 0 {
-            return Ok(total_bytes_read);
-          }
-          total_bytes_read += bytes_read;
-        },
-        Err(error) => {
-          if error.kind() == ErrorKind::WouldBlock {
-            debug!("Read error WouldBlock, yielding.");
-            return Ok(total_bytes_read);
-          }
-          debug!("A differeng kind of error happened: {:?}", error);
-          return Err(error);
-        }
-      }
-    }
-  }
-
-  fn on_writable(&mut self, buffer: &mut Buffer) -> io::Result<usize> {
-    debug!("Writing to bytestream");
-    let mut total_bytes_written: usize = 0;
-    loop {
-      let working_buffer: &[u8] = &buffer.bytes()[total_bytes_written..];
-      if working_buffer.len() == 0 {
-        debug!("Buffer is empty. Yielding.");
-        break;
-      }
-      match self.write(working_buffer) {
-        Ok(bytes_written) => {
-          debug!("Wrote {} bytes", bytes_written);
-          total_bytes_written += bytes_written;
-        },
-        Err(error) => {
-          if error.kind() == ErrorKind::WouldBlock {
-            debug!("Write error WouldBlock, yielding.");
-            break;
-          }
-          panic!("Unknown error while writing: {:?}", error);
-          return Err(error);
-        }
-      }
-    }
-    self.flush(); // Necessary?
-    buffer.restack(total_bytes_written);
-    return Ok(total_bytes_written);
-  }
-  
-  fn on_hup(&mut self) {
-    debug!("EventedByteStream hup");
-  }
-
-  fn on_error(&mut self) {
-    debug!("EventedByteStream error");
-  }
-}
-
-#[derive(Debug,Clone,Copy)]
-enum StreamState {
-  NotReady,
-  Ready,
-  Done
-}
-
-pub type Outbox<F> = VecDeque<F>;
-
-#[derive(Debug)]
-pub struct EventedFrameStream<E, F> where E: EventedByteStream {
-  stream: E,
-  state: StreamState,
-  // TODO: Could be Option<Recycled<'a, Buffer>> with lifetimes
-  read_buffer: Option<RcRecycled<Buffer>>,
-  write_buffer: Option<RcRecycled<Buffer>>,
-  outbox: Option<RcRecycled<Outbox<F>>>
-}
-
-impl <E, F> EventedFrameStream<E, F> where E: EventedByteStream {
-  pub fn is_waiting_to_write(&self) -> bool {
-    self.write_buffer.is_none() && self.outbox.is_none()
-  }
-}
-
-pub trait FrameHandler<F> {
-  fn on_frame_received(&mut self, F);
-  fn on_frame_written(&mut self, F);
-}
 
 pub struct FrameEngineBuilder<E, F, C, H> where 
   E: EventedByteStream,
@@ -170,7 +62,6 @@ impl <E, F, C, H> FrameEngineBuilder<E, F, C, H> where
       write_buffer: None,
       outbox: None
     };
-    //let mut streams = self.frame_engine.streams.borrow_mut();
     let streams = &mut self.frame_engine.streams;
     // Store new stream, get token to use
     let token: Token = match streams.insert(evented_frame_stream) {
@@ -425,8 +316,8 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
   // and then write as much of that buffer into the stream as possible without
   // blocking.
   fn write_frames(codec: &mut C,
-                  frame_handler: &mut H,
-                  token: Token,
+                  _frame_handler: &mut H,
+                  _token: Token,
                   efs: &mut EventedFrameStream<E,F>,
                   buffer_pool: &mut Pool<Buffer>,
                   outbox_pool: &mut Pool<Outbox<F>>) {
@@ -506,7 +397,7 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
          ) {
       debug!("'Hup' event on '{:?}' stream. {:?}", efs.state, token); 
       efs.state = Done;
-      event_loop.shutdown();
+      event_loop.shutdown(); //TODO: Graceful handling
   }
 
   fn error(event_loop: &mut EventLoop<Self>, 
@@ -515,5 +406,6 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
           ) {
       debug!("'Error' event on '{:?}' stream. {:?}", efs.state, token); 
       efs.state = Done;
+      event_loop.shutdown(); //TODO: Graceful handling
   }
 }
