@@ -16,6 +16,11 @@ impl Codec<String> for EchoCodec {
       return Err(EncodingError::InsufficientBufferSize);
     }
     for (index, &byte) in bytes.iter().enumerate() {
+        if byte == 0 {
+          println!("Found null byte at index {}", index);
+          buffer[index] = 'Z' as u8;
+          continue;
+        }
         buffer[index] = byte;
     }
     Ok(BytesWritten(bytes.len()))
@@ -51,6 +56,18 @@ fn main() {
   
   let mut frame_engine = mai::frame_engine(EchoCodec, EchoFrameHandler);
   let token = frame_engine.manage(stream);
+  frame_engine.send(token, "Supercalifragilisticexpialidocious!
+                    Even though the sound of it
+                    Is something quite atrocious
+                    If you say it loud enough
+                    \"You'll\" always sound precocious!
+                    Supercalifragilisticexpialidocious!\n".to_owned());
+/*  frame_engine.send(token, "supercalifragilisticexpialidocious\n".to_owned());
+  frame_engine.send(token, "even though the sound of it\n".to_owned());
+  frame_engine.send(token, "is something quite atrocious\n".to_owned());
+  frame_engine.send(token, "every time you say it you\n".to_owned());
+  frame_engine.send(token, "will always sound precocious\n".to_owned());
   frame_engine.send(token, "supercalifragilisticexpialidocious\n".to_owned());
+  */
   frame_engine.run();
 }
