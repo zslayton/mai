@@ -24,8 +24,18 @@ pub struct EventedFrameStream<E, F> where E: EventedByteStream {
 }
 
 impl <E, F> EventedFrameStream<E, F> where E: EventedByteStream {
-  pub fn is_waiting_to_write(&self) -> bool {
-    self.write_buffer.is_none() && self.outbox.is_none()
+  pub fn new(ebs: E) -> EventedFrameStream<E, F> {
+    EventedFrameStream {
+      stream: ebs,
+      state: StreamState::NotReady,
+      read_buffer: None,
+      write_buffer: None,
+      outbox: None
+    }
+  }
+
+  pub fn has_bytes_to_write(&self) -> bool {
+    (!self.write_buffer.is_none()) || (!self.outbox.is_none())
   }
 }
 

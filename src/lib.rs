@@ -13,6 +13,9 @@ pub mod evented_byte_stream;
 pub mod evented_frame_stream;
 pub mod frame_handler;
 
+mod token_bucket;
+mod stream_manager;
+
 pub use buffer::Buffer;
 pub use frame_handler::FrameHandler;
 pub use evented_byte_stream::EventedByteStream;

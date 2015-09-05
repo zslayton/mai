@@ -9,6 +9,8 @@ use std::collections::VecDeque;
 
 use slab::Index;
 
+use stream_manager::StreamManager;
+
 use EventedFrameStream;
 use EventedByteStream;
 use FrameHandler;
@@ -36,15 +38,13 @@ pub struct FrameEngine<E, F, C, H> where
   C: Codec<F>,
   H: FrameHandler<F>
 {
-  // TODO: Add server?
-  //pub streams: RefCell<Slab<EventedFrameStream<E,F>>>, //TODO: Make this a BTreeMap?
-  pub streams: Slab<EventedFrameStream<E,F>>, //TODO: Make this a BTreeMap?
+  // TODO: Add server
+  pub streams: StreamManager<E, F>, //TODO: Make this a BTreeMap?
   pub buffer_pool: Pool<Buffer>,
   pub outbox_pool: Pool<Outbox<F>>,
-  pub next_token: usize,
   pub codec: C,
   pub frame_handler: H,
-  frame_type: PhantomData<F>
+  frame_type: PhantomData<F> //TODO: make a FrameEngine trait so this can be an assoc type?
 }
 
 impl <E, F, C, H> FrameEngineBuilder<E, F, C, H> where
@@ -53,25 +53,10 @@ impl <E, F, C, H> FrameEngineBuilder<E, F, C, H> where
   H: FrameHandler<F>
 {
 
- // TODO: This should return a Result
- pub fn manage(&mut self, evented_byte_stream: E) -> Token {
-    let evented_frame_stream = EventedFrameStream {
-      stream: evented_byte_stream,
-      state: StreamState::NotReady,
-      read_buffer: None,
-      write_buffer: None,
-      outbox: None
-    };
-    let streams = &mut self.frame_engine.streams;
-    // Store new stream, get token to use
-    let token: Token = match streams.insert(evented_frame_stream) {
-      Ok(token) => token,
-      _ => panic!("Out of room for tokens!") // Dumb limitation
-    };
-    let efs: &EventedFrameStream<E,F> = streams.get(token).expect("Missing just-stored EFS");
-    //TODO: Handle error?
-    let _ = self.event_loop.register(&efs.stream, token).unwrap();
-    token
+  // TODO: This should return a Result
+  // TODO: This should be handled via a Channel
+  pub fn manage(&mut self, evented_byte_stream: E) -> Token {
+    self.frame_engine.manage(&mut self.event_loop, evented_byte_stream)
   }
 
   // TODO: Frame convenience traits, like Frame::From
@@ -102,7 +87,6 @@ impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
       ref mut streams,
       ref mut buffer_pool,
       ref mut outbox_pool,
-      ref next_token,
       ref mut codec,
       ref mut frame_handler,
       ref frame_type
@@ -113,7 +97,9 @@ impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
 
     if event_set.is_writable() {
       FrameEngine::write(codec, frame_handler, token, efs, buffer_pool, outbox_pool);
-      if efs.is_waiting_to_write() {
+      if efs.has_bytes_to_write() {
+        debug!("{:?} is still waiting to write.", token);
+      } else {
         debug!("No more to write for {:?}, deregistering interest in writes", token);
         let mut interests = EventSet::all();
         interests.remove(EventSet::writable());
@@ -158,8 +144,6 @@ impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
 const BUFFER_POOL_SIZE: usize = 16;
 const OUTBOX_POOL_SIZE: usize = 16;
 
-const MAX_STREAMS: usize = 1_024;
-
 impl <E, F, C, H> FrameEngine<E, F, C, H> where
   E: EventedByteStream,
   C: Codec<F>,
@@ -167,15 +151,22 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
 {
   pub fn new(codec: C, frame_handler: H) -> FrameEngine<E, F, C, H> {
     FrameEngine {
-      //streams: RefCell::new(Slab::new(MAX_STREAMS)),
-      streams: Slab::new(MAX_STREAMS),
+      streams: StreamManager::new(),
       buffer_pool: Pool::with_size_and_max(BUFFER_POOL_SIZE, BUFFER_POOL_SIZE),
       outbox_pool: Pool::with_size_and_max(OUTBOX_POOL_SIZE, OUTBOX_POOL_SIZE),
-      next_token: 0,
       codec: codec,
       frame_handler: frame_handler,
       frame_type: PhantomData
     }
+  }
+
+  pub fn manage(&mut self, event_loop: &mut EventLoop<FrameEngine<E,F,C,H>>, evented_byte_stream: E) -> Token {
+    let evented_frame_stream = EventedFrameStream::new(evented_byte_stream);
+    let token = self.streams.insert(evented_frame_stream);
+    let efs = self.streams.get_mut(token).expect("Missing just-inserted EventedFrameStream");
+    //TODO: Handle error?
+    let _ = event_loop.register(&efs.stream, token).unwrap();
+    token
   }
 
   pub fn send(&mut self, event_loop: &mut EventLoop<FrameEngine<E,F,C,H>>, token: Token, frame: F) -> Result<(), FrameEngineError> { //TODO: Formal error type
@@ -183,7 +174,6 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
       ref mut streams,
       ref mut buffer_pool,
       ref mut outbox_pool,
-      ref next_token,
       ref mut codec,
       ref mut frame_handler,
       ref frame_type
@@ -195,7 +185,7 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
       None => return Err(FrameEngineError::NoSuchToken)
     };
     
-    let was_waiting_to_write = efs.is_waiting_to_write();
+    let was_waiting_to_write = efs.has_bytes_to_write();
 
     let mut outbox = efs.outbox
         .take()
