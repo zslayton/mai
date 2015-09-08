@@ -1,7 +1,7 @@
 # mai
 A thin I/O layer built on top of mio that manages buffers and streams so you can focus
 on sending and receiving your protocol's frames. If you're hoping to write a client or
-server for a TCP, pipe or unix socket-based protocol, this is the library for you.
+server for a TCP or unix socket-based protocol, this is the library for you.
 
 ## Status
 Largely functional but currently pre-alpha.
@@ -75,6 +75,7 @@ impl FrameHandler<String> for EchoFrameHandler {
   fn on_frame_received(&mut self, message: String) {
     println!("Received a message: '{}'", &message.trim_right());
   }
+  // Our TcpStream or UnixStream has been closed
   fn on_closed(&mut self, token: Token) {
     println!("Connection closed. {:?}", token);
   }
