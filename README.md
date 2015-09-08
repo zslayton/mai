@@ -1,7 +1,7 @@
 # mai
 A thin I/O layer built on top of mio that manages buffers and streams so you can focus
-on sending and receiving your protocol's frames. If you're hoping to write a client or
-server for a TCP or unix socket-based protocol, this is the library for you.
+on sending and receiving your protocol's frames. If you're writing a client or
+server for a TCP protocol, this is the library for you.
 
 ## Status
 Largely functional but currently pre-alpha.
