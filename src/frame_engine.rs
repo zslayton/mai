@@ -1,17 +1,20 @@
 use mio::{Evented, EventSet, PollOpt, EventLoop, Handler, Token};
+use mio::Sender as MioSender;
 use lifeguard::{Pool, RcRecycled};
 
 use std::marker::PhantomData;
 use std::io::{self, Read, Write, ErrorKind};
 use std::borrow::BorrowMut;
 use std::collections::VecDeque;
+use std::sync::mpsc::{channel, Sender, Receiver};
+use std::thread;
 
 use slab::Index;
 
 use stream_manager::StreamManager;
 use error::Error::{self, Io, Encoding, Decoding};
-//use error::Error::*;
 
+use FrameEngineRemote;
 use EventedFrameStream;
 use EventedByteStream;
 use FrameHandler;
@@ -29,10 +32,6 @@ pub struct FrameEngineBuilder<E, F, C, H> where
 {
   pub frame_engine: FrameEngine<E, F, C, H>, // TODO: make private?
   pub event_loop: EventLoop<FrameEngine<E, F, C, H>>,
-  pub sender: EventLoop<FrameEngine<E, F, C, H>>
-  // FINISH ADDING SENDER/RECEIVER TO FEB,
-  // migrate them in FE::run(), test it out
-  // add timers!
 }
 
 #[derive(Debug)]
@@ -59,7 +58,6 @@ pub struct FrameEngine<E, F, C, H> where
   pub outbox_pool: Pool<Outbox<F>>,
   pub codec: C,
   pub frame_handler: H,
-  pub sender: Sender<()>,
   frame_type: PhantomData<F> //TODO: make a FrameEngine trait so this can be an assoc type?
 }
 
@@ -81,13 +79,10 @@ impl <E, F, C, H> FrameEngineBuilder<E, F, C, H> where
     self.frame_engine.send(&mut self.event_loop, token, frame)
   }
 
-  pub fn run(self) -> Sender<Command<E,F>>{
+  pub fn run(self) {
     let mut event_loop: EventLoop<FrameEngine<E, F, C, H>> = self.event_loop;
     let mut frame_engine : FrameEngine<E, F, C, H> = self.frame_engine;
-    let (tx, rx): (Sender<()>, Receiver<()>) = channel();
-    let command_sender = event_loop.channel();
     let _ = event_loop.run(&mut frame_engine); 
-    (command_sender, rx); // TODO: Clarify names
   }
 }
 
@@ -131,7 +126,6 @@ impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
       ref mut outbox_pool,
       ref mut codec,
       ref mut frame_handler,
-      ref mut sender,
       ref frame_type
     } = *self;
 
@@ -229,7 +223,6 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
       ref mut outbox_pool,
       ref mut codec,
       ref mut frame_handler,
-      ref mut sender,
       ref frame_type
     } = *self;
     // Get the appropriate efs

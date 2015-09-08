@@ -42,11 +42,6 @@ impl FrameHandler<String> for EchoFrameHandler {
   fn on_frame_received(&mut self, _: Token, message: String) {
     println!("Received a message: '{}'", &message.trim_right());
   }
-  /*
-  fn on_frame_written(&mut self, _: Token, message: String) {
-    println!("Wrote a message: '{}'", &message.trim_right());
-  }
-  */
   fn on_error(&mut self, token: Token, error: Error) {
     println!("Error. {:?}, {:?}", token, error);
   }
@@ -72,5 +67,6 @@ fn main() {
                     If you say it loud enough
                     You\\'ll always sound precocious!
                     Supercalifragilisticexpialidocious!\n".to_owned();
-  let sender = frame_engine.run();
+  frame_engine.send(token, message);
+  let _ = frame_engine.run();
 }

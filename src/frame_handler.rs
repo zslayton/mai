@@ -1,7 +1,7 @@
 use mio::Token;
 use ::error::Error;
 
-pub trait FrameHandler<F> {
+pub trait FrameHandler<F> : Send {
   fn on_ready(&mut self, token: Token) {
     debug!("Stream for {:?} is ready to start reading and writing frames.", token);
   }
