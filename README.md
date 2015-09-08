@@ -67,7 +67,7 @@ use mai::FrameHandler;
 struct EchoFrameHandler;
 
 impl FrameHandler<String> for EchoFrameHandler {
-  // Remember this frame (String) you sent asynchronously? It went out ok.
+  // A stream has finished opening/connecting
   fn on_ready(&mut self, token: Token) {
     println!("Connected succesfully. {:?}", token);
   }
