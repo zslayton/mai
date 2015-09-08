@@ -1,9 +1,20 @@
 # mai
 A thin I/O layer built on top of mio that manages buffers and streams so you can focus
-on sending and receiving your protocol's frames.
+on sending and receiving your protocol's frames. If you're hoping to write a client or
+server for a TCP, pipe or unix socket-based protocol, this is the library for you.
 
 ## Status
-Currently pre-alpha. Basic I/O and buffering are in place, but the API is in flux and error handling needs work.
+Largely functional but currently pre-alpha.
+
+## Getting Started
+
+Using `mai` requires three steps:
+
+* Selecting a data type to be your protocol's `Frame`, an actionable message.
+* Defining a `Codec` that knows how to read and write `Frame`s into byte buffers.
+* Specifying a `FrameHandler` to react to new connections, incoming `Frame`s and errors.
+
+Buffer pooling, low-level `reads` and `writes` and `Token` management are handled by `mai`.
 
 ## An Echo Client example
 
@@ -23,7 +34,7 @@ impl Codec<String> for EchoCodec {
     let bytes = message.as_bytes();
     // Make sure the buffer is big enough
     if bytes.len() > buffer.len() {
-      return Err(EncodingError::InsufficientBufferSize);
+      return Err(EncodingError::InsufficientBuffer);
     }
     // Copy the bytes of our String into the buffer
     for (index, &byte) in bytes.iter().enumerate() {
@@ -33,13 +44,13 @@ impl Codec<String> for EchoCodec {
     Ok(BytesWritten(bytes.len()))
   }
 
-  // Provide a method to try to read a frame from a byte buffer
+  // Provide a method to try to parse a frame from a byte buffer
   fn decode(&mut self, buffer: &[u8]) -> DecodingResult<String> {
     use std::str;
     // Validate that the buffer contains a utf-8 String
     let message: String = match str::from_utf8(buffer) {
       Ok(message) => message.to_owned(),
-      // For this example, assume invalid messages means 
+      // For this example, assume that an invalid message means 
       // that we just don't have enough bytes yet
       Err(error) => return Err(DecodingError::IncompleteFrame)
     };
@@ -56,19 +67,22 @@ use mai::FrameHandler;
 struct EchoFrameHandler;
 
 impl FrameHandler<String> for EchoFrameHandler {
+  // Remember this frame (String) you sent asynchronously? It went out ok.
+  fn on_ready(&mut self, token: Token) {
+    println!("Connected succesfully. {:?}", token);
+  }
   // We got a frame (String) from the echo server!
   fn on_frame_received(&mut self, message: String) {
     println!("Received a message: '{}'", &message.trim_right());
   }
-  // Remember this frame (String) you sent asynchronously? It went out ok.
-  fn on_frame_written(&mut self, message: String) {
-    println!("Wrote a message: '{}'", &message.trim_right());
+  fn on_closed(&mut self, token: Token) {
+    println!("Connection closed. {:?}", token);
   }
 }
 ```
 
 ### Get to work
-Create a `FrameEngine` and hand it any `mio` type that is `Evented`+`Read`+`Write`. Watch it go!
+Create a `FrameEngine` and hand it any `mio` type that is `Evented`+`Read`+`Write`+`Send`. Watch it go!
 ```rust
 extern crate mio;
 extern crate mai;
