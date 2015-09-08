@@ -38,7 +38,7 @@ impl <E, F> StreamManager <E, F> where E: EventedByteStream {
   }
 
   pub fn remove(&mut self, token: Token) -> Option<EventedFrameStream<E,F>> {
+    self.token_bucket.put(token);
     self.streams.remove(&token.as_usize())
   }
-
 }

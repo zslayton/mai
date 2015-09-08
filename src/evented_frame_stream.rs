@@ -35,7 +35,10 @@ impl <E, F> EventedFrameStream<E, F> where E: EventedByteStream {
   }
 
   pub fn has_bytes_to_write(&self) -> bool {
-    (!self.write_buffer.is_none()) || (!self.outbox.is_none())
+    // Has bytes in the outbount buffer waiting to be written...
+    (!self.write_buffer.is_none() && self.write_buffer.as_ref().unwrap().len() > 0) 
+    // or frames waiting to be serialized and written
+        || (!self.outbox.is_none() && self.outbox.as_ref().unwrap().len() > 0)
   }
 }
 

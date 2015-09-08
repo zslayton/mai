@@ -7,14 +7,14 @@ pub struct BytesWritten(pub usize);
 
 #[derive(Debug)]
 pub enum DecodingError {
-  InvalidFrame(BytesRead),
+  ProtocolError,
   IncompleteFrame
 }
 
 #[derive(Debug)]
 pub enum EncodingError {
-  InvalidFrame,
-  InsufficientBufferSize
+  ProtocolError,
+  InsufficientBuffer
 }
 
 pub struct DecodedFrame<F> {

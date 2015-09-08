@@ -3,20 +3,13 @@ use std::io::{self, Read, Write, ErrorKind};
 
 use Buffer;
 
-pub trait EventedByteStream : Evented + Read + Write {
-  fn on_ready(&mut self);
-  fn on_readable(&mut self, &mut Buffer) -> io::Result<usize>;
-  fn on_writable(&mut self, &mut Buffer) -> io::Result<usize>;
-  fn on_hup(&mut self);
-  fn on_error(&mut self);
+pub trait EventedByteStream : Evented + Read + Write + Send {
+  fn read_into_buffer(&mut self, &mut Buffer) -> io::Result<usize>;
+  fn write_from_buffer(&mut self, &mut Buffer) -> io::Result<usize>;
 }
 
-impl <T> EventedByteStream for T where T: Evented + Read + Write {
-  fn on_ready(&mut self) {
-    debug!("EventedByteStream is now ready");
-  }
-
-  fn on_readable(&mut self, buffer: &mut Buffer) -> io::Result<usize> {
+impl <T> EventedByteStream for T where T: Evented + Read + Write + Send {
+  fn read_into_buffer(&mut self, buffer: &mut Buffer) -> io::Result<usize> {
     debug!("Reading from EventedByteStream");
     let mut total_bytes_read: usize = 0;
     loop {
@@ -40,14 +33,13 @@ impl <T> EventedByteStream for T where T: Evented + Read + Write {
             debug!("Read error WouldBlock, yielding.");
             return Ok(total_bytes_read);
           }
-          debug!("A differeng kind of error happened: {:?}", error);
           return Err(error);
         }
       }
     }
   }
 
-  fn on_writable(&mut self, buffer: &mut Buffer) -> io::Result<usize> {
+  fn write_from_buffer(&mut self, buffer: &mut Buffer) -> io::Result<usize> {
     debug!("Writing to bytestream");
     let mut total_bytes_written: usize = 0;
     loop {
@@ -66,7 +58,7 @@ impl <T> EventedByteStream for T where T: Evented + Read + Write {
             debug!("Write error WouldBlock, yielding.");
             break;
           }
-          panic!("Unknown error while writing: {:?}", error); //TODO: Graceful handling
+          return Err(error);
         }
       }
     }
@@ -74,17 +66,10 @@ impl <T> EventedByteStream for T where T: Evented + Read + Write {
       Ok(_) => {},
       Err(error) => {
         error!("Could not flush write stream: {:?}", error);
+        return Err(error);
       }
     };
     buffer.restack(total_bytes_written);
     return Ok(total_bytes_written);
-  }
-  
-  fn on_hup(&mut self) {
-    debug!("EventedByteStream hup");
-  }
-
-  fn on_error(&mut self) {
-    debug!("EventedByteStream error");
   }
 }

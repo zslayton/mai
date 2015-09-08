@@ -2,9 +2,11 @@ extern crate mio;
 extern crate mai;
 extern crate env_logger;
 
+use mio::Token;
 use mio::tcp::TcpSocket;
 
 use mai::codec::*;
+use mai::Error;
 use mai::FrameHandler;
 
 struct EchoCodec;
@@ -13,7 +15,7 @@ impl Codec<String> for EchoCodec {
   fn encode(&mut self, message: &String, buffer: &mut [u8]) -> EncodingResult {
     let bytes = message.as_bytes();
     if bytes.len() > buffer.len() {
-      return Err(EncodingError::InsufficientBufferSize);
+      return Err(EncodingError::InsufficientBuffer);
     }
     for (index, &byte) in bytes.iter().enumerate() {
         buffer[index] = byte;
@@ -34,11 +36,22 @@ impl Codec<String> for EchoCodec {
 struct EchoFrameHandler;
 
 impl FrameHandler<String> for EchoFrameHandler {
-  fn on_frame_received(&mut self, message: String) {
+  fn on_ready(&mut self, token: Token) {
+    println!("Connected! {:?}", token);
+  }
+  fn on_frame_received(&mut self, _: Token, message: String) {
     println!("Received a message: '{}'", &message.trim_right());
   }
-  fn on_frame_written(&mut self, message: String) {
+  /*
+  fn on_frame_written(&mut self, _: Token, message: String) {
     println!("Wrote a message: '{}'", &message.trim_right());
+  }
+  */
+  fn on_error(&mut self, token: Token, error: Error) {
+    println!("Error. {:?}, {:?}", token, error);
+  }
+  fn on_closed(&mut self, token: Token) {
+    println!("Disconnected. {:?}", token);
   }
 }
 
@@ -52,12 +65,12 @@ fn main() {
   let mut frame_engine = mai::frame_engine(EchoCodec, EchoFrameHandler);
   let token = frame_engine.manage(stream);
 
-frame_engine.send(token, "Supercalifragilisticexpialidocious!
+//frame_engine.send(token, "Supercalifragilisticexpialidocious!
+  let message: String = "Supercalifragilisticexpialidocious!
                     Even though the sound of it
                     Is something quite atrocious
                     If you say it loud enough
                     You\\'ll always sound precocious!
-                    Supercalifragilisticexpialidocious!\n".to_owned());
-  
-  frame_engine.run();
+                    Supercalifragilisticexpialidocious!\n".to_owned();
+  let sender = frame_engine.run();
 }
