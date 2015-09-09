@@ -6,8 +6,7 @@ use mio::Token;
 use mio::tcp::TcpSocket;
 
 use mai::codec::*;
-use mai::Error;
-use mai::FrameHandler;
+use mai::{FrameHandler, FrameStream, Error};
 
 struct EchoCodec;
 
@@ -35,18 +34,18 @@ impl Codec<String> for EchoCodec {
 
 struct EchoFrameHandler;
 
-impl FrameHandler<String> for EchoFrameHandler {
-  fn on_ready(&mut self, token: Token) {
-    println!("Connected! {:?}", token);
+impl FrameHandler<TcpStream, String> for EchoFrameHandler {
+  fn on_ready(&mut self, stream: &mut FrameStream) {
+    println!("Connected to {:?}, issued {:?}", stream.peer_addr(), stream.token());
   }
-  fn on_frame_received(&mut self, _: Token, message: String) {
-    println!("Received a message: '{}'", &message.trim_right());
+  fn on_frame(&mut self, stream: &mut FrameStream, message: String) {
+    println!("Received a from {:?}/{:?}: '{}'", stream.peer_addr(), stream.token(), &message.trim_right());
   }
-  fn on_error(&mut self, token: Token, error: Error) {
-    println!("Error. {:?}, {:?}", token, error);
+  fn on_error(&mut self, stream: &mut FrameStream, error: Error) {
+    println!("Error. {:?}/{:?}, {:?}", stream.peer_addr(), stream.token(), error);
   }
   fn on_closed(&mut self, token: Token) {
-    println!("Disconnected. {:?}", token);
+    println!("Disconnected from {:?}/{:?}", stream.peer_addr(), stream.token());
   }
 }
 

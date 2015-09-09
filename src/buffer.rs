@@ -4,7 +4,6 @@ use std::fmt;
 const BUFFER_SIZE : usize = 16 * 1_024;
 
 pub struct Buffer {
-  //bytes: Vec<u8>
   bytes: Box<[u8]>,
   in_use: usize
 }

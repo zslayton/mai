@@ -8,6 +8,7 @@ use std::borrow::BorrowMut;
 use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread;
+use std::mem;
 
 use slab::Index;
 
@@ -15,6 +16,7 @@ use stream_manager::StreamManager;
 use error::Error::{self, Io, Encoding, Decoding};
 
 use FrameEngineRemote;
+use FrameStream;
 use EventedFrameStream;
 use EventedByteStream;
 use FrameHandler;
@@ -27,7 +29,7 @@ use codec::*;
 pub struct FrameEngineBuilder<E, F, C, H> where 
   E: EventedByteStream,
   C: Codec<F>,
-  H: FrameHandler<F>,
+  H: FrameHandler<E, F, C, H>,
   F: Send
 {
   pub frame_engine: FrameEngine<E, F, C, H>, // TODO: make private?
@@ -50,7 +52,7 @@ pub enum Command<E,F> where E: EventedByteStream {
 pub struct FrameEngine<E, F, C, H> where 
   E: EventedByteStream,
   C: Codec<F>,
-  H: FrameHandler<F>
+  H: FrameHandler<E, F, C, H>
 {
   // TODO: Add server
   pub streams: StreamManager<E, F>, //TODO: Make this a BTreeMap?
@@ -64,7 +66,7 @@ pub struct FrameEngine<E, F, C, H> where
 impl <E, F, C, H> FrameEngineBuilder<E, F, C, H> where
   E: EventedByteStream,
   C: Codec<F>,
-  H: FrameHandler<F>,
+  H: FrameHandler<E, F, C, H>,
   F: Send
 {
 
@@ -89,7 +91,7 @@ impl <E, F, C, H> FrameEngineBuilder<E, F, C, H> where
 impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
   E: EventedByteStream,
   C: Codec<F>,
-  H: FrameHandler<F>,
+  H: FrameHandler<E, F, C, H>,
   F: Send
 {
   type Timeout = ();
@@ -135,20 +137,17 @@ impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
         let mut efs: &mut EventedFrameStream<E,F> = streams.get_mut(token).expect("Missing token!");
 
         if event_set.is_writable() {
-          FrameEngine::write(codec, frame_handler, token, efs, buffer_pool, outbox_pool);
+          FrameEngine::write(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool);
           if efs.has_bytes_to_write() {
             debug!("{:?} is still waiting to write.", token);
           } else {
             debug!("No more to write for {:?}, deregistering interest in writes", token);
-            let mut interests = EventSet::all();
-            interests.remove(EventSet::writable());
-            let poll_opt = PollOpt::level();
-            event_loop.reregister(&efs.stream, token, interests, poll_opt);
+            efs.deregister_interest_in_writing(event_loop, token);
           }
         }
 
         if event_set.is_readable() {
-          FrameEngine::read(codec, frame_handler, token, efs, buffer_pool);
+          FrameEngine::read(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool);
         }
 
         if event_set.is_hup() {
@@ -166,7 +165,7 @@ impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
         if let Done = efs.state {
           debug!("Shutting down stream. {:?}", token);
           event_loop.deregister(&efs.stream);
-          frame_handler.on_closed(token);
+          frame_handler.on_closed(&mut FrameStream::new(efs, event_loop, outbox_pool, token));
           stream_is_done = true;
         }
     } // `streams` is no longer borrowed
@@ -193,7 +192,7 @@ const OUTBOX_POOL_SIZE: usize = 16;
 impl <E, F, C, H> FrameEngine<E, F, C, H> where
   E: EventedByteStream,
   C: Codec<F>,
-  H: FrameHandler<F>,
+  H: FrameHandler<E, F, C, H>,
   F: Send
 {
   pub fn new(codec: C, frame_handler: H) -> FrameEngine<E, F, C, H> {
@@ -231,43 +230,28 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
       Some(efs) => efs,
       None => return Err(FrameEngineError::NoSuchToken)
     };
-    
-    let was_waiting_to_write = efs.has_bytes_to_write();
-
-    let mut outbox = efs.outbox
-        .take()
-        .or_else(|| Some(outbox_pool.new_rc()))
-        .expect("Couldn't get an outbox!");
-
-    outbox.push_back(frame);
-    efs.outbox = Some(outbox);
-
-    // If we weren't waiting to write before this, register interest
-    // in case we had deregistered it previously.
-    if !was_waiting_to_write { 
-      debug!("Registering interest in writable event for {:?}", token);
-      event_loop.reregister(&efs.stream, token, EventSet::all(), PollOpt::level());
-    }
-    debug!("New message in outbox for {:?}", token);
-
+   
+    efs.send(event_loop, token, outbox_pool, frame);
     Ok(())
   }
 
-  fn read( codec: &mut C, 
+  fn read( event_loop: &mut EventLoop<FrameEngine<E,F,C,H>>,
+           codec: &mut C, 
            frame_handler: &mut H,
            token: Token, 
            efs: &mut EventedFrameStream<E,F>,
-           buffer_pool: &mut Pool<Buffer>) {
+           buffer_pool: &mut Pool<Buffer>,
+           outbox_pool: &mut Pool<Outbox<F>>) {
     match efs.state {
       NotReady => { // The 'readable' event signals a fully connected socket
         debug!("Stream for {:?} is now Ready.", token);
         efs.state = Ready;
-        frame_handler.on_ready(token);
-        FrameEngine::read_frames(codec, frame_handler, token, efs, buffer_pool); 
+        frame_handler.on_ready(&mut FrameStream::new(efs, event_loop, outbox_pool, token));
+        FrameEngine::read_frames(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool); 
       },
       Ready => {
         debug!("Stream for {:?} can be read.", token);
-        FrameEngine::read_frames(codec, frame_handler, token, efs, buffer_pool); 
+        FrameEngine::read_frames(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool); 
       },
       Done => {
         debug!("'Readable' event on 'Done' stream. {:?}", token); 
@@ -278,17 +262,20 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
   // Acquire a buffer, read as many bytes as possible into it without blocking,
   // and then parse as many frames as possible from those bytes, invoking the
   // necessary callback each time.
-  fn read_frames(codec: &mut C,
+  fn read_frames(event_loop: &mut EventLoop<FrameEngine<E,F,C,H>>,
+                 codec: &mut C,
                  frame_handler: &mut H,
                  token: Token,
                  efs: &mut EventedFrameStream<E,F>,
-                 buffer_pool: &mut Pool<Buffer>) {
-    let mut read_buffer = efs.read_buffer
-      .take()
-      .or_else(|| Some(buffer_pool.new_rc()))
-      .expect("Couldn't get a read buffer!");
+                 buffer_pool: &mut Pool<Buffer>,
+                 outbox_pool: &mut Pool<Outbox<F>>) {
+    //let mut read_buffer = efs.read_buffer(buffer_pool);
+    let read_buffer_is_empty;
     let mut frame_count : usize = 0;
-    match efs.stream.read_into_buffer(&mut read_buffer) {
+   {
+    let (stream, mut read_buffer, state) = efs.reading_toolset(buffer_pool);
+    // Extra scope to stop borrowing efs.stream
+    match stream.read_into_buffer(&mut read_buffer) {
       Ok(bytes_read) => {
         debug!("{} bytes read.", bytes_read);
         let mut start_of_remaining: usize = 0;
@@ -309,27 +296,34 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
             Err(DecodingError::IncompleteFrame) => break,
             Err(error) => {
               error!("{:?} Error while decoding frame: {:?}", token, error);
-              frame_handler.on_error(token, Decoding(error));
-              efs.state = Done;
+              //frame_handler.on_error(&mut FrameStream::new(efs, event_loop, outbox_pool, token), Decoding(error));
+              mem::replace(state, Done);
               return;
             },
           };
           frame_count += 1;
           debug!("Calling frame handler");
-          frame_handler.on_frame_received(token, frame);
+          //frame_handler.on_frame(&mut FrameStream::new(efs, event_loop, outbox_pool, token), frame);
         }
       },
       Err(error) => {
         error!("{:?} Error while reading from bytestream: {:?}", token, error);
-        frame_handler.on_error(token, Io(error));
-        efs.state = Done;
+        //frame_handler.on_error(&mut FrameStream::new(efs, event_loop, outbox_pool, token), Io(error));
+        mem::replace(state, Done);
         return;
       }
     };
+    read_buffer_is_empty = read_buffer.len() == 0;
+   } // Unborrow stream, read_buffer
     debug!("Read and processed {} frames.", frame_count);
+    if read_buffer_is_empty {
+      debug!("Read buffer is empty. Returning it to the pool.");
+      efs.read_buffer = None;
+    }
   }
 
-  fn write(codec: &mut C,
+  fn write(event_loop: &mut EventLoop<FrameEngine<E, F, C, H>>,
+           codec: &mut C,
            frame_handler: &mut H,
            token: Token,
            efs: &mut EventedFrameStream<E,F>,
@@ -339,12 +333,12 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
       NotReady => { // The 'writable' event signals a fully connected socket
         debug!("Stream for {:?} is Ready.", token);
         efs.state = Ready;
-        frame_handler.on_ready(token);
-        FrameEngine::write_frames(codec, frame_handler, token, efs, buffer_pool, outbox_pool);
+        frame_handler.on_ready(&mut FrameStream::new(efs, event_loop, outbox_pool, token));
+        FrameEngine::write_frames(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool);
       },
       Ready => {
         trace!("Stream for {:?} can be written to.", token);
-        FrameEngine::write_frames(codec, frame_handler, token, efs, buffer_pool, outbox_pool);
+        FrameEngine::write_frames(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool);
       },
       Done => {
         debug!("'Writable' event on 'Done' stream. {:?}", token); 
@@ -355,7 +349,8 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
   // Acquire a buffer, serialize as many frames as will fit into it,
   // and then write as much of that buffer into the stream as possible without
   // blocking.
-  fn write_frames(codec: &mut C,
+  fn write_frames(event_loop: &mut EventLoop<FrameEngine<E, F, C, H>>,
+                  codec: &mut C,
                   frame_handler: &mut H,
                   token: Token,
                   efs: &mut EventedFrameStream<E,F>,
@@ -368,16 +363,14 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
 
     // Either continue using this efs' write buffer
     // or retrieve a new one from the pool
-    let mut write_buffer = efs.write_buffer
-      .take()
-      .or_else(|| Some(buffer_pool.new_rc()))
-      .expect("Couldn't get a write buffer!");
+    //let mut write_buffer = efs.write_buffer(buffer_pool);
+     let outbox_is_empty;
+     let write_buffer_is_empty;
 
     // Similarly, get a frame queue to work with
-    let mut outbox = efs.outbox
-        .take()
-        .or_else(|| Some(outbox_pool.new_rc()))
-        .expect("Couldn't get an outbox!");
+    //let mut outbox = efs.outbox(outbox_pool);
+   {
+    let (stream, mut write_buffer, outbox, state) = efs.writing_toolset(buffer_pool, outbox_pool);
 
     // Serialize frames into the buffer until it's full
     // or we've run out of frames
@@ -402,8 +395,8 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
         },
         Err(error) => {
           error!("{:?} Error while encoding frame: {:?}", token, error);
-          frame_handler.on_error(token, Encoding(error));
-          efs.state = Done;
+          //frame_handler.on_error(&mut FrameStream::new(efs, event_loop, outbox_pool, token), Encoding(error));
+          mem::replace(state, Done);
           return;
         }
       };
@@ -414,24 +407,29 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
     debug!("Write buffer grew from {} bytes to {} bytes.", buffer_starting_size, buffer_current_size);
     write_buffer.set_size(buffer_current_size);
 
-    // If there are still frames left in the outbox,
-    // pin it to this efs. Otherwise it will return
-    // to the Pool at the end of the method call.
-    if outbox.len() > 0 {
-      efs.outbox = Some(outbox);
-    }
-
-    match efs.stream.write_from_buffer(&mut write_buffer) {
+    match stream.write_from_buffer(&mut write_buffer) {
       Ok(bytes_written) => {
         debug!("{} bytes written to the bytestream.", bytes_written);
       },
       Err(error) => {
         error!("{:?} Error while writing to the bytestream: {:?}", token, error);
-        frame_handler.on_error(token, Io(error));
-        efs.state = Done;
+        //frame_handler.on_error(&mut FrameStream::new(efs, event_loop, outbox_pool, token), Io(error));
+        mem::replace(state, Done);
         return;
       }
     };
+
+     outbox_is_empty = outbox.len() == 0;
+     write_buffer_is_empty = write_buffer.len() == 0;
+   } // Unborrow stream, write_buffer, outbox
+   if outbox_is_empty {
+     debug!("Outbox for {:?} is empty; returning it to the pool.", token);
+     efs.outbox = None;
+   }
+   if write_buffer_is_empty {
+     debug!("Write buffer is empty. Returning it to the pool.");
+     efs.write_buffer = None;
+   }
   }
 
   fn hup(event_loop: &mut EventLoop<Self>, 

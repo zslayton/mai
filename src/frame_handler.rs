@@ -1,24 +1,27 @@
 use mio::Token;
 use ::error::Error;
+use Codec;
+use EventedByteStream;
+use FrameStream;
 
-pub trait FrameHandler<F> : Send {
-  fn on_ready(&mut self, token: Token) {
-    debug!("Stream for {:?} is ready to start reading and writing frames.", token);
+pub trait FrameHandler<E, F, C, H> : Send where 
+  E: EventedByteStream,
+  C: Codec<F>,
+  H: FrameHandler<E, F, C, H>,
+  F: Send {
+  fn on_ready(&mut self, stream: &mut FrameStream<E,F,C,H>) {
+    debug!("Stream for {:?} is ready to start reading and writing frames.", stream.token());
   }
 
-  fn on_frame_received(&mut self, token: Token, _frame: F) {
-    debug!("Stream for {:?} received a frame.", token);
+  fn on_frame(&mut self, stream: &mut FrameStream<E,F,C,H>, _frame: F) {
+    debug!("Stream for {:?} received a frame.", stream.token());
   }
-
-/*  fn on_frame_written(&mut self, token: Token, _frame: F) {
-    debug!("Stream for {:?} sent a frame successfully.", token);
-  }*/
   
-  fn on_error(&mut self, token: Token, error: Error) { // TODO: Error info
-    error!("An error occurred on stream for {:?}.", token);
+  fn on_error(&mut self, stream: &mut FrameStream<E,F,C,H>, error: Error) { 
+    error!("An error occurred on stream for {:?}: {:?}.", stream.token(), error);
   }
 
-  fn on_closed(&mut self, token: Token) {
-    debug!("Stream for {:?} closed.", token);
+  fn on_closed(&mut self, stream: &FrameStream<E,F,C,H>) {
+    debug!("Stream for {:?} closed.", stream.token());
   }
 }
