@@ -2,8 +2,8 @@ extern crate mio;
 extern crate mai;
 extern crate env_logger;
 
-use mio::Token;
-use mio::tcp::TcpSocket;
+//use mio::Token;
+use mio::tcp::{TcpSocket, TcpStream};
 
 use mai::codec::*;
 use mai::{FrameHandler, FrameStream, Error};
@@ -26,7 +26,7 @@ impl Codec<String> for EchoCodec {
     use std::str;
     let message: String = match str::from_utf8(buffer) {
       Ok(message) => message.to_owned(),
-      Err(error) => return Err(DecodingError::IncompleteFrame)
+      Err(_error) => return Err(DecodingError::IncompleteFrame)
     };
     Ok(DecodedFrame::new(message, BytesRead(buffer.len())))
   }
@@ -35,16 +35,16 @@ impl Codec<String> for EchoCodec {
 struct EchoFrameHandler;
 
 impl FrameHandler<TcpStream, String> for EchoFrameHandler {
-  fn on_ready(&mut self, stream: &mut FrameStream) {
+  fn on_ready(&mut self, stream: &mut FrameStream<TcpStream, String>) {
     println!("Connected to {:?}, issued {:?}", stream.peer_addr(), stream.token());
   }
-  fn on_frame(&mut self, stream: &mut FrameStream, message: String) {
-    println!("Received a from {:?}/{:?}: '{}'", stream.peer_addr(), stream.token(), &message.trim_right());
+  fn on_frame(&mut self, stream: &mut FrameStream<TcpStream, String>, message: String) {
+    println!("Received a message from {:?}/{:?}: '{}'", stream.peer_addr(), stream.token(), &message.trim_right());
   }
-  fn on_error(&mut self, stream: &mut FrameStream, error: Error) {
+  fn on_error(&mut self, stream: &mut FrameStream<TcpStream, String>, error: Error) {
     println!("Error. {:?}/{:?}, {:?}", stream.peer_addr(), stream.token(), error);
   }
-  fn on_closed(&mut self, token: Token) {
+  fn on_closed(&mut self, stream: &FrameStream<TcpStream, String>) {
     println!("Disconnected from {:?}/{:?}", stream.peer_addr(), stream.token());
   }
 }

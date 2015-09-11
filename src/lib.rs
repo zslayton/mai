@@ -38,7 +38,7 @@ use mio::{EventLoop};
 pub fn frame_engine<E, F, C, H>(codec: C, frame_handler: H) -> FrameEngineBuilder<E, F, C, H> where
   E: EventedByteStream,
   C: Codec<F>,
-  H: FrameHandler<E, F, C, H>,
+  H: FrameHandler<E, F>,
   F: Send
 {
   FrameEngineBuilder {

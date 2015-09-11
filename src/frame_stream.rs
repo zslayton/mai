@@ -13,32 +13,25 @@ use EventedFrameStream;
 
 use evented_frame_stream::Outbox;
 
-pub struct FrameStream<'a, E, F, C, H> where
+pub struct FrameStream<'a, E, F,> where
   E: 'a + EventedByteStream,
-  C: 'a + Codec<F>,
-  H: 'a + FrameHandler<E, F, C, H>,
   F: 'a + Send {
   efs: &'a mut EventedFrameStream<E, F>,
   token: Token,
-  event_loop: &'a mut EventLoop<FrameEngine<E, F, C, H>>,
   outbox_pool: &'a mut Pool<Outbox<F>>,
 }
 
-impl <'a, E, F, C, H> FrameStream<'a, E, F, C, H> where 
+impl <'a, E, F> FrameStream<'a, E, F> where 
   E: 'a + EventedByteStream,
-  C: 'a + Codec<F>,
-  H: 'a + FrameHandler<E, F, C, H>,
   F: 'a + Send {
 
   pub fn new <'b> (
       efs: &'b mut EventedFrameStream<E, F>,
-      event_loop: &'b mut EventLoop<FrameEngine<E, F, C, H>>,
       outbox_pool: &'b mut Pool<Outbox<F>>,
-      token: Token) -> FrameStream<'b, E, F, C, H> {
+      token: Token) -> FrameStream<'b, E, F,> {
     FrameStream {
       efs: efs,
       token: token,
-      event_loop: event_loop,
       outbox_pool: outbox_pool
     }    
   }
@@ -50,18 +43,15 @@ impl <'a, E, F, C, H> FrameStream<'a, E, F, C, H> where
   pub fn send(&mut self, frame: F) {
     let FrameStream {
       ref mut efs,
-      token,
-      ref mut event_loop,
       ref mut outbox_pool,
+      ..
     } = *self;
-    efs.send(event_loop, token, outbox_pool, frame);
+    efs.outbox(outbox_pool).push_back(frame);
   }
 }
 
 // Methods that will only work for TCP Streams
-impl <'a, F, C, H> FrameStream<'a, TcpStream, F, C, H> where 
-  C: 'a + Codec<F>,
-  H: 'a + FrameHandler<TcpStream, F, C, H>,
+impl <'a, F> FrameStream<'a, TcpStream, F> where 
   F: 'a + Send {
 
   pub fn peer_addr(&self) -> io::Result<SocketAddr> {
