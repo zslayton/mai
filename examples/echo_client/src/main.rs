@@ -42,6 +42,14 @@ impl Codec<String> for EchoCodec {
 impl FrameHandler<EchoClient> for EchoClientHandler {
   fn on_ready(&mut self, stream: &mut FrameStream<EchoClient>) {
     println!("Connected to {:?}, issued {:?}", stream.peer_addr(), stream.token());
+    let message: String = "Supercalifragilisticexpialidocious!
+                    Even though the sound of it
+                    Is something quite atrocious
+                    If you say it loud enough
+                    You\\'ll always sound precocious!
+                    Supercalifragilisticexpialidocious!\n".to_owned();
+    println!("Sending message...");
+    stream.send(message);
   }
   fn on_frame(&mut self, stream: &mut FrameStream<EchoClient>, message: String) {
     println!("Received a message from {:?}/{:?}: '{}'", stream.peer_addr(), stream.token(), &message.trim_right());
@@ -61,14 +69,7 @@ fn main() {
   let socket = TcpSocket::v4().unwrap();
   let (stream, _complete) = socket.connect(&address).unwrap();
   
-  let mut frame_engine: FrameEngineBuilder<EchoClient> = mai::frame_engine(EchoCodec, EchoClientHandler);
-  let token = frame_engine.manage(stream);
-
-  let message: String = "Supercalifragilisticexpialidocious!
-                    Even though the sound of it
-                    Is something quite atrocious
-                    If you say it loud enough
-                    You\\'ll always sound precocious!
-                    Supercalifragilisticexpialidocious!\n".to_owned();
-  frame_engine.send(token, message);
-  let _ = frame_engine.run();
+  let frame_engine: FrameEngineRemote<EchoClient> = mai::frame_engine(EchoCodec, EchoClientHandler).run();
+  frame_engine.manage(stream);
+  frame_engine.wait();
+}

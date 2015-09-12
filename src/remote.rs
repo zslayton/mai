@@ -9,13 +9,13 @@ use Codec;
 use EventedByteStream;
 use Command;
 
-pub struct FrameEngineRemote<P> where
+pub struct FrameEngineRemote<P: ?Sized> where
   P: Protocol {
     command_sender: MioSender<Command<P>>,
     receiver: Receiver<()>
 }
 
-impl <P> FrameEngineRemote<P> where
+impl <P: ?Sized> FrameEngineRemote<P> where
   P: Protocol {
 
   pub fn new(command_sender: MioSender<Command<P>>, receiver: Receiver<()>) -> FrameEngineRemote<P> {

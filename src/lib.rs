@@ -40,7 +40,8 @@ use mio::{EventLoop};
 pub fn frame_engine<P>(codec: P::Codec, frame_handler: P::Handler) -> FrameEngineBuilder<P> 
   where P: Protocol {
   FrameEngineBuilder {
-    frame_engine: FrameEngine::new(codec, frame_handler),
+    codec: codec,
+    frame_handler: frame_handler,
     event_loop: EventLoop::new().ok().expect("EventLoop creation failed.")
   }
 }

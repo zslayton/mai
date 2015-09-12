@@ -28,7 +28,8 @@ use Buffer;
 use codec::*;
 
 pub struct FrameEngineBuilder<P: ?Sized> where P: Protocol {
-  pub frame_engine: FrameEngine<P>, // TODO: make private?
+  pub codec: P::Codec,
+  pub frame_handler: P::Handler,
   pub event_loop: EventLoop<FrameEngine<P>>,
 }
 
@@ -52,25 +53,22 @@ pub struct FrameEngine<P: ?Sized> where P: Protocol {
   pub outbox_pool: Pool<Outbox<P::Frame>>,
   pub codec: P::Codec,
   pub frame_handler: P::Handler,
+  pub sender: Sender<()>,
 }
 
-impl <P: ?Sized> FrameEngineBuilder<P> where P: Protocol {
-
-  // TODO: This should return a Result
-  // TODO: This should be handled via a Channel
-  pub fn manage(&mut self, evented_byte_stream: P::ByteStream) -> Token {
-    self.frame_engine.manage(&mut self.event_loop, evented_byte_stream)
-  }
-
-  // TODO: Frame convenience traits, like Frame::From
-  pub fn send(&mut self, token: Token, frame: P::Frame) -> Result<(), FrameEngineError> { //TODO: Formal error type
-    self.frame_engine.send(&mut self.event_loop, token, frame)
-  }
-
-  pub fn run(self) {
+impl <P: ?Sized> FrameEngineBuilder<P> where P: Protocol + 'static {
+  pub fn run(self) -> FrameEngineRemote<P> {
     let mut event_loop: EventLoop<FrameEngine<P>> = self.event_loop;
-    let mut frame_engine : FrameEngine<P> = self.frame_engine;
-    let _ = event_loop.run(&mut frame_engine); 
+    let codec = self.codec;
+    let handler = self.frame_handler;
+    let command_sender = event_loop.channel();
+    let (sender, receiver) = channel();
+    let frame_engine_remote = FrameEngineRemote::new(command_sender, receiver);
+    let _ = thread::spawn(move || {
+      let mut frame_engine : FrameEngine<P> = FrameEngine::new(codec, handler, sender);
+      let _ = event_loop.run(&mut frame_engine);
+    });
+    frame_engine_remote
   }
 }
 
@@ -109,6 +107,7 @@ impl <P: ?Sized> Handler for FrameEngine<P> where P: Protocol {
       ref mut outbox_pool,
       ref mut codec,
       ref mut frame_handler,
+      ref mut sender
     } = *self;
 
     let mut stream_is_done = false;
@@ -172,13 +171,14 @@ const BUFFER_POOL_SIZE: usize = 16;
 const OUTBOX_POOL_SIZE: usize = 16;
 
 impl <P: ?Sized> FrameEngine<P> where P: Protocol {
-  pub fn new(codec: P::Codec, frame_handler: P::Handler) -> FrameEngine<P> {
+  pub fn new(codec: P::Codec, frame_handler: P::Handler, sender: Sender<()>) -> FrameEngine<P> {
     FrameEngine {
       streams: StreamManager::new(),
       buffer_pool: Pool::with_size_and_max(BUFFER_POOL_SIZE, BUFFER_POOL_SIZE),
       outbox_pool: Pool::with_size_and_max(OUTBOX_POOL_SIZE, OUTBOX_POOL_SIZE),
       codec: codec,
       frame_handler: frame_handler,
+      sender: sender
     }
   }
 
@@ -198,6 +198,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
       ref mut outbox_pool,
       ref mut codec,
       ref mut frame_handler,
+      ref mut sender
     } = *self;
     // Get the appropriate efs
     // TODO: Break this into its own helper function
