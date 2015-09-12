@@ -6,9 +6,18 @@ extern crate env_logger;
 use mio::tcp::{TcpSocket, TcpStream};
 
 use mai::codec::*;
-use mai::{FrameHandler, FrameStream, Error};
+use mai::{FrameHandler, FrameStream, Error, Protocol};
 
+struct EchoProtocol;
 struct EchoCodec;
+struct EchoClient;
+
+impl Protocol for EchoProtocol {
+  type ByteStream = TcpStream;
+  type Frame = String;
+  type Codec = EchoCodec;
+  type Handler = EchoClient;
+}
 
 impl Codec<String> for EchoCodec {
   fn encode(&mut self, message: &String, buffer: &mut [u8]) -> EncodingResult {
@@ -32,19 +41,17 @@ impl Codec<String> for EchoCodec {
   }
 }
 
-struct EchoFrameHandler;
-
-impl FrameHandler<TcpStream, String> for EchoFrameHandler {
-  fn on_ready(&mut self, stream: &mut FrameStream<TcpStream, String>) {
+impl FrameHandler<EchoProtocol> for EchoFrameHandler {
+  fn on_ready(&mut self, stream: &mut FrameStream<EchoProtocol>) {
     println!("Connected to {:?}, issued {:?}", stream.peer_addr(), stream.token());
   }
-  fn on_frame(&mut self, stream: &mut FrameStream<TcpStream, String>, message: String) {
+  fn on_frame(&mut self, stream: &mut FrameStream<EchoProtocol>, message: String) {
     println!("Received a message from {:?}/{:?}: '{}'", stream.peer_addr(), stream.token(), &message.trim_right());
   }
-  fn on_error(&mut self, stream: &mut FrameStream<TcpStream, String>, error: Error) {
+  fn on_error(&mut self, stream: &mut FrameStream<EchoProtocol>, error: Error) {
     println!("Error. {:?}/{:?}, {:?}", stream.peer_addr(), stream.token(), error);
   }
-  fn on_closed(&mut self, stream: &FrameStream<TcpStream, String>) {
+  fn on_closed(&mut self, stream: &FrameStream<EchoProtocol>) {
     println!("Disconnected from {:?}/{:?}", stream.peer_addr(), stream.token());
   }
 }
@@ -59,7 +66,6 @@ fn main() {
   let mut frame_engine = mai::frame_engine(EchoCodec, EchoFrameHandler);
   let token = frame_engine.manage(stream);
 
-//frame_engine.send(token, "Supercalifragilisticexpialidocious!
   let message: String = "Supercalifragilisticexpialidocious!
                     Even though the sound of it
                     Is something quite atrocious

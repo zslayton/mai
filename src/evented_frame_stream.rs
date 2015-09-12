@@ -3,6 +3,7 @@ use mio::{EventLoop, EventSet, Token, PollOpt};
 
 use std::collections::VecDeque;
 
+use Protocol;
 use EventedByteStream;
 use Codec;
 use Buffer;
@@ -19,18 +20,16 @@ pub enum StreamState {
 pub type Outbox<F> = VecDeque<F>;
 
 #[derive(Debug)]
-pub struct EventedFrameStream<E, F> where E: EventedByteStream {
-  pub stream: E,
+pub struct EventedFrameStream<P: ?Sized> where P: Protocol {
+  pub stream: P::ByteStream,
   pub state: StreamState,
   pub read_buffer: Option<RcRecycled<Buffer>>,
   pub write_buffer: Option<RcRecycled<Buffer>>,
-  pub outbox: Option<RcRecycled<Outbox<F>>>
+  pub outbox: Option<RcRecycled<Outbox<P::Frame>>>
 }
 
-impl <E, F> EventedFrameStream<E, F> where 
-    E: EventedByteStream,
-    F: Send {
-  pub fn new(ebs: E) -> EventedFrameStream<E, F> {
+impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
+  pub fn new(ebs: P::ByteStream) -> EventedFrameStream<P> {
     EventedFrameStream {
       stream: ebs,
       state: StreamState::NotReady,
@@ -87,7 +86,7 @@ impl <E, F> EventedFrameStream<E, F> where
   }
 
   // TODO: Remove State
-  pub fn reading_toolset(&mut self, buffer_pool: &mut Pool<Buffer>) -> (&mut E, &mut Buffer, &mut StreamState) {
+  pub fn reading_toolset(&mut self, buffer_pool: &mut Pool<Buffer>) -> (&mut P::ByteStream, &mut Buffer, &mut StreamState) {
     if self.read_buffer.is_none() {
       debug!("Getting a read_buffer from the pool.");
       self.read_buffer = Some(buffer_pool.new_rc());
@@ -103,7 +102,7 @@ impl <E, F> EventedFrameStream<E, F> where
 
   // TODO: Split into encoding_toolset and writing_toolset?
   // Currently an outbox will be allocated if absent, which is silly
-  pub fn writing_toolset(&mut self, buffer_pool: &mut Pool<Buffer>, outbox_pool: &mut Pool<Outbox<F>>) -> (&mut E, &mut Buffer, &mut Outbox<F>, &mut StreamState) {
+  pub fn writing_toolset(&mut self, buffer_pool: &mut Pool<Buffer>, outbox_pool: &mut Pool<Outbox<P::Frame>>) -> (&mut P::ByteStream, &mut Buffer, &mut Outbox<P::Frame>, &mut StreamState) {
     if self.write_buffer.is_none() {
       debug!("Getting a write_buffer from the pool.");
       self.write_buffer = Some(buffer_pool.new_rc());
@@ -137,7 +136,7 @@ impl <E, F> EventedFrameStream<E, F> where
     self.write_buffer.as_mut().unwrap()
   }
 
-  pub fn outbox(&mut self, outbox_pool: &mut Pool<Outbox<F>>) -> &mut Outbox<F> {
+  pub fn outbox(&mut self, outbox_pool: &mut Pool<Outbox<P::Frame>>) -> &mut Outbox<P::Frame> {
     if self.outbox.is_none() {
       debug!("Getting an outbox from the pool.");
       self.outbox = Some(outbox_pool.new_rc());
@@ -145,13 +144,11 @@ impl <E, F> EventedFrameStream<E, F> where
     self.outbox.as_mut().unwrap()
   }
 
-  pub fn register_interest_in_writing <C, H>(
+  pub fn register_interest_in_writing (
     &self, 
     event_loop: 
-    &mut EventLoop<FrameEngine<E,F,C,H>>,
-    token: Token) where
-    C: Codec<F>,
-    H: FrameHandler<E, F> {
+    &mut EventLoop<FrameEngine<P>>,
+    token: Token) {
       debug!("Registering interest in writable event.");
       event_loop.reregister(
         &self.stream,
@@ -161,13 +158,11 @@ impl <E, F> EventedFrameStream<E, F> where
       );
   }
   
-  pub fn deregister_interest_in_writing <C, H>(
+  pub fn deregister_interest_in_writing (
     &self, 
     event_loop: 
-    &mut EventLoop<FrameEngine<E,F,C,H>>,
-    token: Token) where
-    C: Codec<F>,
-    H: FrameHandler<E, F> {
+    &mut EventLoop<FrameEngine<P>>,
+    token: Token) {
       debug!("De-registering interest in writable event.");
       let mut interests = EventSet::all();
       interests.remove(EventSet::writable());
@@ -179,14 +174,12 @@ impl <E, F> EventedFrameStream<E, F> where
       );
   }
 
-  pub fn send<C, H>(
+  pub fn send (
     &mut self,
-    event_loop: &mut EventLoop<FrameEngine<E,F,C,H>>,
+    event_loop: &mut EventLoop<FrameEngine<P>>,
     token: Token,
-    outbox_pool: &mut Pool<Outbox<F>>,
-    frame: F) where
-    C: Codec<F>,
-    H: FrameHandler<E, F> {
+    outbox_pool: &mut Pool<Outbox<P::Frame>>,
+    frame: P::Frame) {
   
     // If we weren't waiting to write before this, register interest
     // in case we had deregistered it previously.

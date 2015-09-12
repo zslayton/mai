@@ -6,6 +6,7 @@ extern crate mio;
 extern crate slab;
 extern crate lifeguard;
 
+pub mod protocol;
 pub mod codec;
 pub mod buffer;
 pub mod frame_engine;
@@ -19,6 +20,7 @@ pub mod remote;
 mod token_bucket;
 mod stream_manager;
 
+pub use protocol::Protocol;
 pub use remote::FrameEngineRemote;
 pub use error::Error;
 pub use buffer::Buffer;
@@ -35,12 +37,8 @@ pub use codec::Codec;
 
 use mio::{EventLoop};
 
-pub fn frame_engine<E, F, C, H>(codec: C, frame_handler: H) -> FrameEngineBuilder<E, F, C, H> where
-  E: EventedByteStream,
-  C: Codec<F>,
-  H: FrameHandler<E, F>,
-  F: Send
-{
+pub fn frame_engine<P>(codec: P::Codec, frame_handler: P::Handler) -> FrameEngineBuilder<P> 
+  where P: Protocol {
   FrameEngineBuilder {
     frame_engine: FrameEngine::new(codec, frame_handler),
     event_loop: EventLoop::new().ok().expect("EventLoop creation failed.")
