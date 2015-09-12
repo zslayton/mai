@@ -33,7 +33,7 @@ pub use frame_stream::FrameStream;
 pub use frame_engine::FrameEngineBuilder;
 pub use frame_engine::FrameEngine;
 pub use frame_engine::Command;
-pub use codec::Codec;
+pub use codec::*;
 
 use mio::{EventLoop};
 
