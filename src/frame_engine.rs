@@ -15,6 +15,7 @@ use slab::Index;
 use stream_manager::StreamManager;
 use error::Error::{self, Io, Encoding, Decoding};
 
+use Protocol;
 use FrameEngineRemote;
 use FrameStream;
 use EventedFrameStream;
@@ -26,14 +27,10 @@ use Outbox;
 use Buffer;
 use codec::*;
 
-pub struct FrameEngineBuilder<E, F, C, H> where 
-  E: EventedByteStream,
-  C: Codec<F>,
-  H: FrameHandler<E, F>,
-  F: Send
-{
-  pub frame_engine: FrameEngine<E, F, C, H>, // TODO: make private?
-  pub event_loop: EventLoop<FrameEngine<E, F, C, H>>,
+pub struct FrameEngineBuilder<P: ?Sized> where P: Protocol {
+  pub codec: P::Codec,
+  pub frame_handler: P::Handler,
+  pub event_loop: EventLoop<FrameEngine<P>>,
 }
 
 #[derive(Debug)]
@@ -41,63 +38,45 @@ pub enum FrameEngineError {
   NoSuchToken
 }
 
-pub enum Command<E,F> where E: EventedByteStream {
+pub enum Command<P: ?Sized> where P: Protocol {
   Shutdown,
-  Manage(E),
-  Send(Token, F),
+  Manage(P::ByteStream),
+  Send(Token, P::Frame),
 //  SendFrameToList(Vec<Token>, F),
 //  BroadcastFrame(F)
 }
 
-pub struct FrameEngine<E, F, C, H> where 
-  E: EventedByteStream,
-  C: Codec<F>,
-  H: FrameHandler<E, F>
-{
+pub struct FrameEngine<P: ?Sized> where P: Protocol {
   // TODO: Add server
-  pub streams: StreamManager<E, F>,
+  pub streams: StreamManager<P>,
   pub buffer_pool: Pool<Buffer>,
-  pub outbox_pool: Pool<Outbox<F>>,
-  pub codec: C,
-  pub frame_handler: H,
-  frame_type: PhantomData<F> //TODO: make a FrameEngine trait so this can be an assoc type?
+  pub outbox_pool: Pool<Outbox<P::Frame>>,
+  pub codec: P::Codec,
+  pub frame_handler: P::Handler,
+  pub sender: Sender<()>,
 }
 
-impl <E, F, C, H> FrameEngineBuilder<E, F, C, H> where
-  E: EventedByteStream,
-  C: Codec<F>,
-  H: FrameHandler<E, F>,
-  F: Send
-{
-
-  // TODO: This should return a Result
-  // TODO: This should be handled via a Channel
-  pub fn manage(&mut self, evented_byte_stream: E) -> Token {
-    self.frame_engine.manage(&mut self.event_loop, evented_byte_stream)
-  }
-
-  // TODO: Frame convenience traits, like Frame::From
-  pub fn send(&mut self, token: Token, frame: F) -> Result<(), FrameEngineError> { //TODO: Formal error type
-    self.frame_engine.send(&mut self.event_loop, token, frame)
-  }
-
-  pub fn run(self) {
-    let mut event_loop: EventLoop<FrameEngine<E, F, C, H>> = self.event_loop;
-    let mut frame_engine : FrameEngine<E, F, C, H> = self.frame_engine;
-    let _ = event_loop.run(&mut frame_engine); 
+impl <P: ?Sized> FrameEngineBuilder<P> where P: Protocol + 'static {
+  pub fn run(self) -> FrameEngineRemote<P> {
+    let mut event_loop: EventLoop<FrameEngine<P>> = self.event_loop;
+    let codec = self.codec;
+    let handler = self.frame_handler;
+    let command_sender = event_loop.channel();
+    let (sender, receiver) = channel();
+    let frame_engine_remote = FrameEngineRemote::new(command_sender, receiver);
+    let _ = thread::spawn(move || {
+      let mut frame_engine : FrameEngine<P> = FrameEngine::new(codec, handler, sender);
+      let _ = event_loop.run(&mut frame_engine);
+    });
+    frame_engine_remote
   }
 }
 
-impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
-  E: EventedByteStream,
-  C: Codec<F>,
-  H: FrameHandler<E, F>,
-  F: Send
-{
-  type Timeout = ();
-  type Message = Command<E,F>;
+impl <P: ?Sized> Handler for FrameEngine<P> where P: Protocol {
+  type Timeout = P::Timeout;
+  type Message = Command<P>;
 
-  fn notify(&mut self, event_loop: &mut EventLoop<Self>, command: Command<E,F>) {
+  fn notify(&mut self, event_loop: &mut EventLoop<Self>, command: Command<P>) {
     use self::Command::*;
     match command {
       Shutdown => {
@@ -128,13 +107,13 @@ impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
       ref mut outbox_pool,
       ref mut codec,
       ref mut frame_handler,
-      ref frame_type
+      ref mut sender
     } = *self;
 
     let mut stream_is_done = false;
     {
         // Get a reference to the EventedFrameStream we'll be modifying
-        let mut efs: &mut EventedFrameStream<E,F> = streams.get_mut(token).expect("Missing token!");
+       let mut efs: &mut EventedFrameStream<P> = streams.get_mut(token).expect("Missing token!");
 
         if event_set.is_writable() {
           FrameEngine::on_writable(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool);
@@ -165,7 +144,7 @@ impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
         if let Done = efs.state {
           debug!("Shutting down stream. {:?}", token);
           event_loop.deregister(&efs.stream);
-          frame_handler.on_closed(&FrameStream::new(efs, outbox_pool, token));
+          frame_handler.on_closed(&FrameStream::new(event_loop, efs, outbox_pool, token));
           stream_is_done = true;
         } else {
           efs.release_empty_buffers();
@@ -179,7 +158,8 @@ impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
   }
 
   fn timeout(&mut self, event_loop: &mut EventLoop<Self>, timeout: Self::Timeout) {
-    debug!("Timeout called, Timeout={:?}", timeout);
+    debug!("Timeout fired, Timeout={:?}", timeout);
+    self.frame_handler.on_timeout(timeout);
   }
 
   fn interrupted(&mut self, event_loop: &mut EventLoop<Self>) {
@@ -191,24 +171,19 @@ impl <E, F, C, H> Handler for FrameEngine<E, F, C, H> where
 const BUFFER_POOL_SIZE: usize = 16;
 const OUTBOX_POOL_SIZE: usize = 16;
 
-impl <E, F, C, H> FrameEngine<E, F, C, H> where
-  E: EventedByteStream,
-  C: Codec<F>,
-  H: FrameHandler<E, F>,
-  F: Send
-{
-  pub fn new(codec: C, frame_handler: H) -> FrameEngine<E, F, C, H> {
+impl <P: ?Sized> FrameEngine<P> where P: Protocol {
+  pub fn new(codec: P::Codec, frame_handler: P::Handler, sender: Sender<()>) -> FrameEngine<P> {
     FrameEngine {
       streams: StreamManager::new(),
       buffer_pool: Pool::with_size_and_max(BUFFER_POOL_SIZE, BUFFER_POOL_SIZE),
       outbox_pool: Pool::with_size_and_max(OUTBOX_POOL_SIZE, OUTBOX_POOL_SIZE),
       codec: codec,
       frame_handler: frame_handler,
-      frame_type: PhantomData
+      sender: sender
     }
   }
 
-  pub fn manage(&mut self, event_loop: &mut EventLoop<FrameEngine<E,F,C,H>>, evented_byte_stream: E) -> Token {
+  pub fn manage(&mut self, event_loop: &mut EventLoop<FrameEngine<P>>, evented_byte_stream: P::ByteStream) -> Token {
     let evented_frame_stream = EventedFrameStream::new(evented_byte_stream);
     let token = self.streams.insert(evented_frame_stream);
     let efs = self.streams.get_mut(token).expect("Missing just-inserted EventedFrameStream");
@@ -217,18 +192,18 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
     token
   }
 
-  pub fn send(&mut self, event_loop: &mut EventLoop<FrameEngine<E,F,C,H>>, token: Token, frame: F) -> Result<(), FrameEngineError> { //TODO: Formal error type
+  pub fn send(&mut self, event_loop: &mut EventLoop<FrameEngine<P>>, token: Token, frame: P::Frame) -> Result<(), FrameEngineError> { //TODO: Formal error type
     let FrameEngine {
       ref mut streams,
       ref mut buffer_pool,
       ref mut outbox_pool,
       ref mut codec,
       ref mut frame_handler,
-      ref frame_type
+      ref mut sender
     } = *self;
     // Get the appropriate efs
     // TODO: Break this into its own helper function
-    let efs: &mut EventedFrameStream<E,F> = match streams.get_mut(token) {
+    let efs: &mut EventedFrameStream<P> = match streams.get_mut(token) {
       Some(efs) => efs,
       None => return Err(FrameEngineError::NoSuchToken)
     };
@@ -237,18 +212,18 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
     Ok(())
   }
 
-  fn on_readable(event_loop: &mut EventLoop<FrameEngine<E, F, C, H>>,
-          codec: &mut C,
-          frame_handler: &mut H,
+  fn on_readable(event_loop: &mut EventLoop<FrameEngine<P>>,
+          codec: &mut P::Codec,
+          frame_handler: &mut P::Handler,
           token: Token,
-          efs: &mut EventedFrameStream<E,F>,
+          efs: &mut EventedFrameStream<P>,
           buffer_pool: &mut Pool<Buffer>,
-          outbox_pool: &mut Pool<Outbox<F>>) {
+          outbox_pool: &mut Pool<Outbox<P::Frame>>) {
     match efs.state {
       NotReady => { // The 'readable' event signals a fully connected socket
         debug!("Stream for {:?} is now Ready.", token);
         efs.state = Ready;
-        frame_handler.on_ready(&mut FrameStream::new(efs, outbox_pool, token));
+        frame_handler.on_ready(&mut FrameStream::new(event_loop, efs, outbox_pool, token));
         FrameEngine::read(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool);
       },
       Ready => {
@@ -261,13 +236,13 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
     }
   }
 
-  fn read(event_loop: &mut EventLoop<FrameEngine<E, F, C, H>>,
-          codec: &mut C,
-          frame_handler: &mut H,
+  fn read(event_loop: &mut EventLoop<FrameEngine<P>>,
+          codec: &mut P::Codec,
+          frame_handler: &mut P::Handler,
           token: Token,
-          efs: &mut EventedFrameStream<E,F>,
+          efs: &mut EventedFrameStream<P>,
           buffer_pool: &mut Pool<Buffer>,
-          outbox_pool: &mut Pool<Outbox<F>>) -> Result<(), Error> {
+          outbox_pool: &mut Pool<Outbox<P::Frame>>) -> Result<(), Error> {
     let mut frames = Vec::new(); // TODO: Store one in FrameEngine and re-use it
     // Read bytes into a buffer
     match Self::read_bytes(efs, token, buffer_pool) {
@@ -306,7 +281,7 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
     };
 
     // Invoke the user's callback for each frame that was decoded
-    let frame_stream = &mut FrameStream::new(efs, outbox_pool, token);
+    let frame_stream = &mut FrameStream::new(event_loop, efs, outbox_pool, token);
     for frame in frames { // Process each and destroy the vector
       debug!("Invoking on_frame for {:?}", token);
       frame_handler.on_frame(frame_stream, frame);
@@ -314,7 +289,7 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
     Ok(())
   }
 
-  fn read_bytes( efs: &mut EventedFrameStream<E,F>,
+  fn read_bytes( efs: &mut EventedFrameStream<P>,
                  token: Token,
                  buffer_pool: &mut Pool<Buffer>) -> io::Result<BytesRead> {
     debug!("Reading bytes for {:?}", token);
@@ -327,9 +302,9 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
 
   fn decode_frames(
       token: Token,
-      codec: &mut C, 
+      codec: &mut P::Codec, 
       buffer: &mut Buffer, 
-      frames: &mut Vec<F>) -> Result<(), DecodingError> {
+      frames: &mut Vec<P::Frame>) -> Result<(), DecodingError> {
     debug!("Decoding frames for {:?}", token);
     let mut start_of_remaining: usize = 0;
     loop {
@@ -359,19 +334,19 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
     }
   }
 
-  fn on_writable(event_loop: &mut EventLoop<FrameEngine<E, F, C, H>>,
-           codec: &mut C,
-           frame_handler: &mut H,
+  fn on_writable(event_loop: &mut EventLoop<FrameEngine<P>>,
+           codec: &mut P::Codec,
+           frame_handler: &mut P::Handler,
            token: Token,
-           efs: &mut EventedFrameStream<E,F>,
+           efs: &mut EventedFrameStream<P>,
            buffer_pool: &mut Pool<Buffer>,
-           outbox_pool: &mut Pool<Outbox<F>>) {
+           outbox_pool: &mut Pool<Outbox<P::Frame>>) {
     let state = efs.state;
     match state {
       NotReady => { // The 'writable' event signals a fully connected socket
         debug!("Stream for {:?} is Ready.", token);
         efs.state = Ready;
-        frame_handler.on_ready(&mut FrameStream::new(efs, outbox_pool, token));
+        frame_handler.on_ready(&mut FrameStream::new(event_loop, efs, outbox_pool, token));
         FrameEngine::write(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool);
       },
       Ready => {
@@ -384,13 +359,13 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
     }
   }
 
-  fn write(event_loop: &mut EventLoop<FrameEngine<E, F, C, H>>,
-           codec: &mut C,
-           frame_handler: &mut H,
+  fn write(event_loop: &mut EventLoop<FrameEngine<P>>,
+           codec: &mut P::Codec,
+           frame_handler: &mut P::Handler,
            token: Token,
-           efs: &mut EventedFrameStream<E,F>,
+           efs: &mut EventedFrameStream<P>,
            buffer_pool: &mut Pool<Buffer>,
-           outbox_pool: &mut Pool<Outbox<F>>) -> Result<(), Error> {
+           outbox_pool: &mut Pool<Outbox<P::Frame>>) -> Result<(), Error> {
     match Self::encode_frames(codec, token, efs, buffer_pool, outbox_pool) {
       Ok(_) => {
         debug!("Encoding complete for {:?}", token);
@@ -416,11 +391,11 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
   // and then write as much of that buffer into the stream as possible without
   // blocking.
   fn encode_frames(
-                  codec: &mut C,
+                  codec: &mut P::Codec,
                   token: Token,
-                  efs: &mut EventedFrameStream<E,F>,
+                  efs: &mut EventedFrameStream<P>,
                   buffer_pool: &mut Pool<Buffer>,
-                  outbox_pool: &mut Pool<Outbox<F>>) -> Result<(), EncodingError> {
+                  outbox_pool: &mut Pool<Outbox<P::Frame>>) -> Result<(), EncodingError> {
    
     // References to the efs components we'll need for serializing
     let (stream, mut write_buffer, outbox, state) = efs.writing_toolset(buffer_pool, outbox_pool);
@@ -430,7 +405,7 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
     let mut frame_count: usize = 0;
     let mut total_bytes_written: usize = 0;
     while outbox.len() > 0 {
-      let frame: F = outbox.pop_front().expect("Outbox has len>0 but no messages.");
+      let frame: P::Frame = outbox.pop_front().expect("Outbox has len>0 but no messages.");
       let buffer_to_fill = write_buffer.remaining();
       match codec.encode(&frame, buffer_to_fill) {
         Ok(BytesWritten(bytes_written)) => {
@@ -461,9 +436,9 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
   }
 
   fn write_bytes(token: Token,
-                 efs: &mut EventedFrameStream<E,F>,
+                 efs: &mut EventedFrameStream<P>,
                  buffer_pool: &mut Pool<Buffer>,
-                 outbox_pool: &mut Pool<Outbox<F>>) -> io::Result<BytesWritten> {
+                 outbox_pool: &mut Pool<Outbox<P::Frame>>) -> io::Result<BytesWritten> {
     // TODO: This may not be necessary; values are guaranteed to be in place?
     let (stream, mut write_buffer, _outbox, _state) = efs.writing_toolset(buffer_pool, outbox_pool);
 
@@ -481,7 +456,7 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
 
   fn hup(event_loop: &mut EventLoop<Self>, 
            token: Token, 
-           efs: &mut EventedFrameStream<E,F>
+           efs: &mut EventedFrameStream<P>
          ) {
       debug!("'Hup' event on '{:?}' stream. {:?}", efs.state, token); 
       efs.state = Done;
@@ -489,7 +464,7 @@ impl <E, F, C, H> FrameEngine<E, F, C, H> where
 
   fn error(event_loop: &mut EventLoop<Self>, 
            token: Token, 
-           efs: &mut EventedFrameStream<E,F>
+           efs: &mut EventedFrameStream<P>
           ) {
       debug!("'Error' event on '{:?}' stream. {:?}", efs.state, token); 
       efs.state = Done;

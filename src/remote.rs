@@ -3,23 +3,22 @@ use mio::Token;
 use std::result::Result;
 use std::sync::mpsc::{Receiver};
 
+use Protocol;
 use FrameHandler;
 use Codec;
 use EventedByteStream;
 use Command;
 
-pub struct FrameEngineRemote<E, F> where
-  E: EventedByteStream,
-  F: Send {
-    command_sender: MioSender<Command<E,F>>,
+pub struct FrameEngineRemote<P: ?Sized> where
+  P: Protocol {
+    command_sender: MioSender<Command<P>>,
     receiver: Receiver<()>
 }
 
-impl <E, F> FrameEngineRemote<E, F> where
-  E: EventedByteStream,
-  F: Send {
+impl <P: ?Sized> FrameEngineRemote<P> where
+  P: Protocol {
 
-  pub fn new(command_sender: MioSender<Command<E,F>>, receiver: Receiver<()>) -> FrameEngineRemote<E, F> {
+  pub fn new(command_sender: MioSender<Command<P>>, receiver: Receiver<()>) -> FrameEngineRemote<P> {
     FrameEngineRemote {
       command_sender: command_sender,
       receiver: receiver
@@ -27,11 +26,11 @@ impl <E, F> FrameEngineRemote<E, F> where
   }
 
   //TODO: Error reporting
-  pub fn send(&self, token: Token, frame: F) {
+  pub fn send(&self, token: Token, frame: P::Frame) {
     let _ = self.command_sender.send(Command::Send(token, frame));
   }
 
-  pub fn manage(&self, evented_byte_stream: E) {
+  pub fn manage(&self, evented_byte_stream: P::ByteStream) {
     let _ = self.command_sender.send(Command::Manage(evented_byte_stream));
   }
 

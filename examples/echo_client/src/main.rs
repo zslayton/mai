@@ -4,11 +4,19 @@ extern crate env_logger;
 
 //use mio::Token;
 use mio::tcp::{TcpSocket, TcpStream};
-
-use mai::codec::*;
-use mai::{FrameHandler, FrameStream, Error};
+use mai::*;
 
 struct EchoCodec;
+struct EchoClient;
+struct EchoClientHandler;
+
+impl Protocol for EchoClient {
+  type ByteStream = TcpStream;
+  type Frame = String;
+  type Codec = EchoCodec;
+  type Handler = EchoClientHandler;
+  type Timeout = usize;
+}
 
 impl Codec<String> for EchoCodec {
   fn encode(&mut self, message: &String, buffer: &mut [u8]) -> EncodingResult {
@@ -32,19 +40,29 @@ impl Codec<String> for EchoCodec {
   }
 }
 
-struct EchoFrameHandler;
-
-impl FrameHandler<TcpStream, String> for EchoFrameHandler {
-  fn on_ready(&mut self, stream: &mut FrameStream<TcpStream, String>) {
+impl FrameHandler<EchoClient> for EchoClientHandler {
+  fn on_ready(&mut self, stream: &mut FrameStream<EchoClient>) {
     println!("Connected to {:?}, issued {:?}", stream.peer_addr(), stream.token());
+    let message: String = "Supercalifragilisticexpialidocious!
+                    Even though the sound of it
+                    Is something quite atrocious
+                    If you say it loud enough
+                    You\\'ll always sound precocious!
+                    Supercalifragilisticexpialidocious!\n".to_owned();
+    println!("Sending message...");
+    stream.send(message);
+    stream.timeout_ms(55, 5_000);
   }
-  fn on_frame(&mut self, stream: &mut FrameStream<TcpStream, String>, message: String) {
+  fn on_frame(&mut self, stream: &mut FrameStream<EchoClient>, message: String) {
     println!("Received a message from {:?}/{:?}: '{}'", stream.peer_addr(), stream.token(), &message.trim_right());
   }
-  fn on_error(&mut self, stream: &mut FrameStream<TcpStream, String>, error: Error) {
+  fn on_timeout(&mut self, timeout: usize) {
+    println!("TIMEOUT! {:?}", timeout);
+  }
+  fn on_error(&mut self, stream: &mut FrameStream<EchoClient>, error: Error) {
     println!("Error. {:?}/{:?}, {:?}", stream.peer_addr(), stream.token(), error);
   }
-  fn on_closed(&mut self, stream: &FrameStream<TcpStream, String>) {
+  fn on_closed(&mut self, stream: &FrameStream<EchoClient>) {
     println!("Disconnected from {:?}/{:?}", stream.peer_addr(), stream.token());
   }
 }
@@ -56,16 +74,7 @@ fn main() {
   let socket = TcpSocket::v4().unwrap();
   let (stream, _complete) = socket.connect(&address).unwrap();
   
-  let mut frame_engine = mai::frame_engine(EchoCodec, EchoFrameHandler);
-  let token = frame_engine.manage(stream);
-
-//frame_engine.send(token, "Supercalifragilisticexpialidocious!
-  let message: String = "Supercalifragilisticexpialidocious!
-                    Even though the sound of it
-                    Is something quite atrocious
-                    If you say it loud enough
-                    You\\'ll always sound precocious!
-                    Supercalifragilisticexpialidocious!\n".to_owned();
-  frame_engine.send(token, message);
-  let _ = frame_engine.run();
+  let frame_engine: FrameEngineRemote<EchoClient> = mai::frame_engine(EchoCodec, EchoClientHandler).run();
+  frame_engine.manage(stream);
+  frame_engine.wait();
 }

@@ -4,6 +4,7 @@ use mio::{EventLoop, Token};
 use mio::tcp::TcpStream;
 use lifeguard::Pool;
 
+use Protocol;
 use EventedByteStream;
 use FrameEngine;
 use Codec;
@@ -13,23 +14,25 @@ use EventedFrameStream;
 
 use evented_frame_stream::Outbox;
 
-pub struct FrameStream<'a, E, F,> where
-  E: 'a + EventedByteStream,
-  F: 'a + Send {
-  efs: &'a mut EventedFrameStream<E, F>,
-  token: Token,
-  outbox_pool: &'a mut Pool<Outbox<F>>,
+pub struct FrameStream<'a, P: ?Sized> where
+  P: 'a + Protocol
+  {
+    event_loop: &'a mut EventLoop<FrameEngine<P>>,
+    efs: &'a mut EventedFrameStream<P>,
+    token: Token,
+    outbox_pool: &'a mut Pool<Outbox<P::Frame>>,
 }
 
-impl <'a, E, F> FrameStream<'a, E, F> where 
-  E: 'a + EventedByteStream,
-  F: 'a + Send {
-
-  pub fn new <'b> (
-      efs: &'b mut EventedFrameStream<E, F>,
-      outbox_pool: &'b mut Pool<Outbox<F>>,
-      token: Token) -> FrameStream<'b, E, F,> {
+impl <'a, P: ?Sized> FrameStream<'a, P> where 
+  P: 'a + Protocol
+  {
+  pub fn new(
+      event_loop: &'a mut EventLoop<FrameEngine<P>>,
+      efs: &'a mut EventedFrameStream<P>,
+      outbox_pool: &'a mut Pool<Outbox<P::Frame>>,
+      token: Token) -> FrameStream<'a, P> {
     FrameStream {
+      event_loop: event_loop,
       efs: efs,
       token: token,
       outbox_pool: outbox_pool
@@ -40,20 +43,25 @@ impl <'a, E, F> FrameStream<'a, E, F> where
     self.token
   }
 
-  pub fn send(&mut self, frame: F) {
+  pub fn send(&mut self, frame: P::Frame) {
     let FrameStream {
+      ref mut event_loop,
       ref mut efs,
+      token,
       ref mut outbox_pool,
-      ..
     } = *self;
-    efs.outbox(outbox_pool).push_back(frame);
+    efs.send(event_loop, token, outbox_pool, frame);
+  }
+
+  pub fn timeout_ms(&mut self, timeout: P::Timeout, milliseconds: u64) {
+    self.event_loop.timeout_ms(timeout, milliseconds);
   }
 }
 
 // Methods that will only work for TCP Streams
-impl <'a, F> FrameStream<'a, TcpStream, F> where 
-  F: 'a + Send {
-
+impl <'a, P: ?Sized> FrameStream<'a, P> where 
+  P: Protocol<ByteStream=TcpStream>
+  {
   pub fn peer_addr(&self) -> io::Result<SocketAddr> {
     self.efs.stream.peer_addr()
   }

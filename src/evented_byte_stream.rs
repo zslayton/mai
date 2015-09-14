@@ -62,13 +62,14 @@ impl <T> EventedByteStream for T where T: Evented + Read + Write + Send {
         }
       }
     }
-    match self.flush() {
+/*    match self.flush() {
       Ok(_) => {},
       Err(error) => {
         error!("Could not flush write stream: {:?}", error);
         return Err(error);
       }
     };
+    */
     buffer.restack(total_bytes_written);
     return Ok(total_bytes_written);
   }
