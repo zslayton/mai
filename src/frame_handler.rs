@@ -15,6 +15,10 @@ pub trait FrameHandler<P: ?Sized> : Send where P : Protocol {
     debug!("Stream for {:?} received a frame.", stream.token());
   }
   
+  fn on_timeout(&mut self, timeout: P::Timeout) {
+    debug!("TIMEOUT!"); 
+  }
+
   fn on_error(&mut self, stream: &mut FrameStream<P>, error: Error) { 
     error!("An error occurred on stream for {:?}: {:?}.", stream.token(), error);
   }

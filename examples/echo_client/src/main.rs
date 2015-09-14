@@ -15,6 +15,7 @@ impl Protocol for EchoClient {
   type Frame = String;
   type Codec = EchoCodec;
   type Handler = EchoClientHandler;
+  type Timeout = usize;
 }
 
 impl Codec<String> for EchoCodec {
@@ -50,9 +51,13 @@ impl FrameHandler<EchoClient> for EchoClientHandler {
                     Supercalifragilisticexpialidocious!\n".to_owned();
     println!("Sending message...");
     stream.send(message);
+    stream.timeout_ms(55, 5_000);
   }
   fn on_frame(&mut self, stream: &mut FrameStream<EchoClient>, message: String) {
     println!("Received a message from {:?}/{:?}: '{}'", stream.peer_addr(), stream.token(), &message.trim_right());
+  }
+  fn on_timeout(&mut self, timeout: usize) {
+    println!("TIMEOUT! {:?}", timeout);
   }
   fn on_error(&mut self, stream: &mut FrameStream<EchoClient>, error: Error) {
     println!("Error. {:?}/{:?}, {:?}", stream.peer_addr(), stream.token(), error);

@@ -73,7 +73,7 @@ impl <P: ?Sized> FrameEngineBuilder<P> where P: Protocol + 'static {
 }
 
 impl <P: ?Sized> Handler for FrameEngine<P> where P: Protocol {
-  type Timeout = ();
+  type Timeout = P::Timeout;
   type Message = Command<P>;
 
   fn notify(&mut self, event_loop: &mut EventLoop<Self>, command: Command<P>) {
@@ -113,7 +113,7 @@ impl <P: ?Sized> Handler for FrameEngine<P> where P: Protocol {
     let mut stream_is_done = false;
     {
         // Get a reference to the EventedFrameStream we'll be modifying
-        let mut efs: &mut EventedFrameStream<P> = streams.get_mut(token).expect("Missing token!");
+       let mut efs: &mut EventedFrameStream<P> = streams.get_mut(token).expect("Missing token!");
 
         if event_set.is_writable() {
           FrameEngine::on_writable(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool);
@@ -144,7 +144,7 @@ impl <P: ?Sized> Handler for FrameEngine<P> where P: Protocol {
         if let Done = efs.state {
           debug!("Shutting down stream. {:?}", token);
           event_loop.deregister(&efs.stream);
-          frame_handler.on_closed(&FrameStream::new(efs, outbox_pool, token));
+          frame_handler.on_closed(&FrameStream::new(event_loop, efs, outbox_pool, token));
           stream_is_done = true;
         } else {
           efs.release_empty_buffers();
@@ -158,7 +158,8 @@ impl <P: ?Sized> Handler for FrameEngine<P> where P: Protocol {
   }
 
   fn timeout(&mut self, event_loop: &mut EventLoop<Self>, timeout: Self::Timeout) {
-    debug!("Timeout called, Timeout={:?}", timeout);
+    debug!("Timeout fired, Timeout={:?}", timeout);
+    self.frame_handler.on_timeout(timeout);
   }
 
   fn interrupted(&mut self, event_loop: &mut EventLoop<Self>) {
@@ -222,7 +223,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
       NotReady => { // The 'readable' event signals a fully connected socket
         debug!("Stream for {:?} is now Ready.", token);
         efs.state = Ready;
-        frame_handler.on_ready(&mut FrameStream::new(efs, outbox_pool, token));
+        frame_handler.on_ready(&mut FrameStream::new(event_loop, efs, outbox_pool, token));
         FrameEngine::read(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool);
       },
       Ready => {
@@ -280,7 +281,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
     };
 
     // Invoke the user's callback for each frame that was decoded
-    let frame_stream = &mut FrameStream::new(efs, outbox_pool, token);
+    let frame_stream = &mut FrameStream::new(event_loop, efs, outbox_pool, token);
     for frame in frames { // Process each and destroy the vector
       debug!("Invoking on_frame for {:?}", token);
       frame_handler.on_frame(frame_stream, frame);
@@ -345,7 +346,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
       NotReady => { // The 'writable' event signals a fully connected socket
         debug!("Stream for {:?} is Ready.", token);
         efs.state = Ready;
-        frame_handler.on_ready(&mut FrameStream::new(efs, outbox_pool, token));
+        frame_handler.on_ready(&mut FrameStream::new(event_loop, efs, outbox_pool, token));
         FrameEngine::write(event_loop, codec, frame_handler, token, efs, buffer_pool, outbox_pool);
       },
       Ready => {
