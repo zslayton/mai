@@ -4,7 +4,6 @@ use std::result::Result;
 use std::sync::mpsc::{Receiver};
 
 use Protocol;
-use FrameHandler;
 use Codec;
 use EventedByteStream;
 use Command;

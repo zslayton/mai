@@ -2,12 +2,12 @@ use lifeguard::{RcRecycled, Pool};
 use mio::{EventLoop, EventSet, Token, PollOpt};
 
 use std::collections::VecDeque;
+use std::default;
 
 use Protocol;
 use EventedByteStream;
 use Codec;
 use Buffer;
-use FrameHandler;
 use FrameEngine;
 
 #[derive(Debug,Clone,Copy)]
@@ -25,7 +25,8 @@ pub struct EventedFrameStream<P: ?Sized> where P: Protocol {
   pub state: StreamState,
   pub read_buffer: Option<RcRecycled<Buffer>>,
   pub write_buffer: Option<RcRecycled<Buffer>>,
-  pub outbox: Option<RcRecycled<Outbox<P::Frame>>>
+  pub outbox: Option<RcRecycled<Outbox<P::Frame>>>,
+  pub session: P::Session
 }
 
 impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
@@ -35,7 +36,8 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
       state: StreamState::NotReady,
       read_buffer: None,
       write_buffer: None,
-      outbox: None
+      outbox: None,
+      session: Default::default(),
     }
   }
 
