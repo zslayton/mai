@@ -81,7 +81,7 @@ impl <P: ?Sized> MioHandler for FrameEngine<P> where P: Protocol {
     use self::Command::*;
     match command {
       Shutdown => {
-        debug!("Received Shutdown command. Shuttind down event loop.");
+        debug!("Received Shutdown command. Shutting down event loop.");
         event_loop.shutdown();
       },
       Manage(evented_byte_stream) => {
@@ -198,12 +198,8 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
   pub fn send(&mut self, event_loop: &mut EventLoop<FrameEngine<P>>, token: Token, frame: P::Frame) -> Result<(), FrameEngineError> { //TODO: Formal error type
     let FrameEngine {
       ref mut streams,
-      ref mut buffer_pool,
       ref mut outbox_pool,
-      ref mut codec,
-      ref mut handler,
-      ref mut engine_session,
-      ref mut sender
+      ..
     } = *self;
     // Get the appropriate efs
     // TODO: Break this into its own helper function
@@ -259,7 +255,12 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
       },
       Err(io_error) => {
         error!("An I/O Error occurred while reading: {:?}", io_error);
-        return Err(Io(io_error));
+        let error = Io(io_error);
+        handler.on_error(
+          &mut Context::new(event_loop, efs, outbox_pool, token, engine_session),
+          &error
+        );
+        return Err(error);
       }
     };
 
@@ -278,9 +279,14 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
       Ok(_) => {
         debug!("Decoding complete. {} frames decoded.", frames.len());
       },
-      Err(error) => {
-        error!("Encountered a protocol error: {:?}", error);
-        return Err(Decoding(error));
+      Err(decoding_error) => {
+        error!("Encountered a protocol error: {:?}", decoding_error);
+        let error = Decoding(decoding_error);
+        handler.on_error(
+          &mut Context::new(event_loop, efs, outbox_pool, token, engine_session),
+          &error
+        );
+        return Err(error);
       }
     };
 
@@ -376,16 +382,26 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
       },
       Err(error) => {
         error!("Encountered an encoding error for {:?}", token);
-        return Err(Encoding(error));
+        let error = Encoding(error);
+        handler.on_error(
+          &mut Context::new(event_loop, efs, outbox_pool, token, engine_session),
+          &error
+        );
+        return Err(error);
       } 
     };
     match Self::write_bytes(token, efs, buffer_pool, outbox_pool) {
       Ok(BytesWritten(_)) => {
         debug!("Writing complete for {:?}", token);
       },
-      Err(error) => {
-        error!("Encountered an I/O error for {:?}: {:?}", token, error);
-        return Err(Io(error));
+      Err(io_error) => {
+        error!("Encountered an I/O error for {:?}: {:?}", token, io_error);
+        let error = Io(io_error);
+        handler.on_error(
+          &mut Context::new(event_loop, efs, outbox_pool, token, engine_session),
+          &error
+        );
+        return Err(error);
       }
     };
     Ok(())
@@ -402,7 +418,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
                   outbox_pool: &mut Pool<Outbox<P::Frame>>) -> Result<(), EncodingError> {
    
     // References to the efs components we'll need for serializing
-    let (stream, mut write_buffer, outbox, state) = efs.writing_toolset(buffer_pool, outbox_pool);
+    let (_stream, mut write_buffer, outbox, _state) = efs.writing_toolset(buffer_pool, outbox_pool);
 
     // Serialize frames into the buffer until it's full
     // or we've run out of frames
@@ -458,7 +474,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
     }
   }
 
-  fn hup(event_loop: &mut EventLoop<Self>, 
+  fn hup(_event_loop: &mut EventLoop<Self>, 
            token: Token, 
            efs: &mut EventedFrameStream<P>
          ) {
@@ -466,7 +482,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
       efs.state = Done;
   }
 
-  fn error(event_loop: &mut EventLoop<Self>, 
+  fn error(_event_loop: &mut EventLoop<Self>, 
            token: Token, 
            efs: &mut EventedFrameStream<P>
           ) {

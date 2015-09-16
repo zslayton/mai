@@ -16,6 +16,8 @@ impl Protocol for EchoClient {
   type Codec = EchoCodec;
   type Handler = EchoClientHandler;
   type Timeout = usize;
+  type Session = ();
+  type EngineSession = ();
 }
 
 impl Codec<String> for EchoCodec {
@@ -40,9 +42,13 @@ impl Codec<String> for EchoCodec {
   }
 }
 
-impl FrameHandler<EchoClient> for EchoClientHandler {
-  fn on_ready(&mut self, stream: &mut FrameStream<EchoClient>) {
-    println!("Connected to {:?}, issued {:?}", stream.peer_addr(), stream.token());
+impl Handler<EchoClient> for EchoClientHandler {
+  fn on_ready(&mut self, context: &mut Context<EchoClient>) {
+    context.engine().timeout_ms(55, 5_000);
+    let mut stream = context.stream();
+    println!("Connected to {:?}, issued {:?}",
+             stream.peer_addr().unwrap(),
+             stream.token());
     let message: String = "Supercalifragilisticexpialidocious!
                     Even though the sound of it
                     Is something quite atrocious
@@ -51,19 +57,29 @@ impl FrameHandler<EchoClient> for EchoClientHandler {
                     Supercalifragilisticexpialidocious!\n".to_owned();
     println!("Sending message...");
     stream.send(message);
-    stream.timeout_ms(55, 5_000);
   }
-  fn on_frame(&mut self, stream: &mut FrameStream<EchoClient>, message: String) {
-    println!("Received a message from {:?}/{:?}: '{}'", stream.peer_addr(), stream.token(), &message.trim_right());
+  fn on_frame(&mut self, context: &mut Context<EchoClient>, message: String) {
+    let stream = context.stream();
+    println!("Received a message from {:?}/{:?}: '{}'", 
+             stream.peer_addr().unwrap(),
+             stream.token(),
+             &message.trim_right());
   }
   fn on_timeout(&mut self, timeout: usize) {
-    println!("TIMEOUT! {:?}", timeout);
+    println!("A timeout occurred: #{:?}", timeout);
   }
-  fn on_error(&mut self, stream: &mut FrameStream<EchoClient>, error: Error) {
-    println!("Error. {:?}/{:?}, {:?}", stream.peer_addr(), stream.token(), error);
+  fn on_error(&mut self, context: &mut Context<EchoClient>, error: &Error) {
+    let stream = context.stream();
+    println!("Error. {:?}/{:?}, {:?}",
+             stream.peer_addr().unwrap(),
+             stream.token(),
+             error);
   }
-  fn on_closed(&mut self, stream: &FrameStream<EchoClient>) {
-    println!("Disconnected from {:?}/{:?}", stream.peer_addr(), stream.token());
+  fn on_closed(&mut self, context: &mut Context<EchoClient>) {
+    let stream = context.stream();
+    println!("Disconnected from {:?}/{:?}",
+             stream.peer_addr().unwrap(),
+             stream.token());
   }
 }
 

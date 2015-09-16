@@ -1,11 +1,8 @@
 use mio::Sender as MioSender;
 use mio::Token;
-use std::result::Result;
 use std::sync::mpsc::{Receiver};
 
 use Protocol;
-use Codec;
-use EventedByteStream;
 use Command;
 
 pub struct FrameEngineRemote<P: ?Sized> where

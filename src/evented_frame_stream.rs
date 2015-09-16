@@ -2,11 +2,8 @@ use lifeguard::{RcRecycled, Pool};
 use mio::{EventLoop, EventSet, Token, PollOpt};
 
 use std::collections::VecDeque;
-use std::default;
 
 use Protocol;
-use EventedByteStream;
-use Codec;
 use Buffer;
 use FrameEngine;
 

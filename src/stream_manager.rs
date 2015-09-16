@@ -4,7 +4,6 @@ use slab::Index;
 use mio::Token;
 
 use Protocol;
-use EventedByteStream;
 use EventedFrameStream;
 use ::token_bucket::TokenBucket;
 

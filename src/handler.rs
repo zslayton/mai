@@ -1,7 +1,4 @@
-use mio::Token;
 use ::error::Error;
-use Codec;
-use EventedByteStream;
 use Context;
 use Protocol;
 
@@ -16,10 +13,10 @@ pub trait Handler<P: ?Sized> : Send where P : Protocol {
   }
   
   fn on_timeout(&mut self, timeout: P::Timeout) {
-    debug!("TIMEOUT!"); 
+    debug!("A timeout occurred: {:?}", timeout); 
   }
 
-  fn on_error(&mut self, context: &mut Context<P>, error: Error) { 
+  fn on_error(&mut self, context: &mut Context<P>, error: &Error) { 
     error!("An error occurred on context for {:?}: {:?}.", context.stream().token(), error);
   }
 
