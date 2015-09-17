@@ -17,7 +17,7 @@ pub struct Context<'a, P: ?Sized> where
     efs: &'a mut EventedFrameStream<P>,
     token: Token,
     outbox_pool: &'a mut Pool<Outbox<P::Frame>>,
-    engine_session: &'a mut P::EngineSession,
+    application: &'a mut P::Application,
 }
 
 pub struct EngineHandle<'handle, 'context: 'handle, P: ?Sized> where
@@ -35,8 +35,8 @@ pub struct StreamHandle<'handle, 'context: 'handle, P: ?Sized> where
 impl <'handle, 'context: 'handle, P: ?Sized> EngineHandle<'handle, 'context, P> where 
   P: 'context + Protocol
   {
-  pub fn session(&mut self) -> &mut P::EngineSession {
-    self.context.engine_session
+  pub fn application(&mut self) -> &mut P::Application {
+    self.context.application
   }
 
   pub fn timeout_ms(&mut self, timeout: P::Timeout, milliseconds: u64) {
@@ -89,13 +89,13 @@ impl <'a, P: ?Sized> Context<'a, P> where
       efs: &'a mut EventedFrameStream<P>,
       outbox_pool: &'a mut Pool<Outbox<P::Frame>>,
       token: Token,
-      engine_session: &'a mut P::EngineSession) -> Context<'a, P> {
+      application: &'a mut P::Application) -> Context<'a, P> {
     Context {
       event_loop: event_loop,
       efs: efs,
       token: token,
       outbox_pool: outbox_pool,
-      engine_session: engine_session
+      application: application
     }
   }
 

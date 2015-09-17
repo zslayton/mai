@@ -53,7 +53,7 @@ pub struct FrameEngine<P: ?Sized> where P: Protocol {
   pub outbox_pool: Pool<Outbox<P::Frame>>,
   pub codec: P::Codec,
   pub handler: P::Handler,
-  pub engine_session: P::EngineSession,
+  pub application: P::Application,
   pub sender: Sender<()>,
 }
 
@@ -108,7 +108,7 @@ impl <P: ?Sized> MioHandler for FrameEngine<P> where P: Protocol {
       ref mut outbox_pool,
       ref mut codec,
       ref mut handler,
-      ref mut engine_session,
+      ref mut application,
       ref mut sender
     } = *self;
 
@@ -118,7 +118,7 @@ impl <P: ?Sized> MioHandler for FrameEngine<P> where P: Protocol {
        let mut efs: &mut EventedFrameStream<P> = streams.get_mut(token).expect("Missing token!");
 
         if event_set.is_writable() {
-          FrameEngine::on_writable(event_loop, codec, handler, token, efs, engine_session, buffer_pool, outbox_pool);
+          FrameEngine::on_writable(event_loop, codec, handler, token, efs, application, buffer_pool, outbox_pool);
           if efs.has_bytes_to_write() {
             debug!("{:?} is still waiting to write.", token);
           } else {
@@ -128,7 +128,7 @@ impl <P: ?Sized> MioHandler for FrameEngine<P> where P: Protocol {
         }
 
         if event_set.is_readable() {
-          FrameEngine::on_readable(event_loop, codec, handler, token, efs, engine_session, buffer_pool, outbox_pool);
+          FrameEngine::on_readable(event_loop, codec, handler, token, efs, application, buffer_pool, outbox_pool);
         }
 
         if event_set.is_hup() {
@@ -146,7 +146,7 @@ impl <P: ?Sized> MioHandler for FrameEngine<P> where P: Protocol {
         if let Done = efs.state {
           debug!("Shutting down stream. {:?}", token);
           event_loop.deregister(&efs.stream);
-          handler.on_closed(&mut Context::new(event_loop, efs, outbox_pool, token, engine_session));
+          handler.on_closed(&mut Context::new(event_loop, efs, outbox_pool, token, application));
           stream_is_done = true;
         } else {
           efs.release_empty_buffers();
@@ -181,7 +181,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
       outbox_pool: Pool::with_size_and_max(OUTBOX_POOL_SIZE, OUTBOX_POOL_SIZE),
       codec: codec,
       handler: handler,
-      engine_session: Default::default(),
+      application: Default::default(),
       sender: sender
     }
   }
@@ -216,19 +216,19 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
           codec: &mut P::Codec,
           handler: &mut P::Handler,
           token: Token,
-          efs: &mut EventedFrameStream<P>, engine_session: &mut P::EngineSession,
+          efs: &mut EventedFrameStream<P>, application: &mut P::Application,
           buffer_pool: &mut Pool<Buffer>,
           outbox_pool: &mut Pool<Outbox<P::Frame>>) {
     match efs.state {
       NotReady => { // The 'readable' event signals a fully connected socket
         debug!("Stream for {:?} is now Ready.", token);
         efs.state = Ready;
-        handler.on_ready(&mut Context::new(event_loop, efs, outbox_pool, token, engine_session));
-        FrameEngine::read(event_loop, codec, handler, token, efs, engine_session, buffer_pool, outbox_pool);
+        handler.on_ready(&mut Context::new(event_loop, efs, outbox_pool, token, application));
+        FrameEngine::read(event_loop, codec, handler, token, efs, application, buffer_pool, outbox_pool);
       },
       Ready => {
         debug!("Stream for {:?} can be read.", token);
-        FrameEngine::read(event_loop, codec, handler, token, efs, engine_session, buffer_pool, outbox_pool);
+        FrameEngine::read(event_loop, codec, handler, token, efs, application, buffer_pool, outbox_pool);
       },
       Done => {
         debug!("'Readable' event on 'Done' stream. {:?}", token);
@@ -240,7 +240,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
           codec: &mut P::Codec,
           handler: &mut P::Handler,
           token: Token,
-          efs: &mut EventedFrameStream<P>, engine_session: &mut P::EngineSession,
+          efs: &mut EventedFrameStream<P>, application: &mut P::Application,
           buffer_pool: &mut Pool<Buffer>,
           outbox_pool: &mut Pool<Outbox<P::Frame>>) -> Result<(), Error> {
     let mut frames = Vec::new(); // TODO: Store one in FrameEngine and re-use it
@@ -257,7 +257,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
         error!("An I/O Error occurred while reading: {:?}", io_error);
         let error = Io(io_error);
         handler.on_error(
-          &mut Context::new(event_loop, efs, outbox_pool, token, engine_session),
+          &mut Context::new(event_loop, efs, outbox_pool, token, application),
           &error
         );
         return Err(error);
@@ -283,7 +283,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
         error!("Encountered a protocol error: {:?}", decoding_error);
         let error = Decoding(decoding_error);
         handler.on_error(
-          &mut Context::new(event_loop, efs, outbox_pool, token, engine_session),
+          &mut Context::new(event_loop, efs, outbox_pool, token, application),
           &error
         );
         return Err(error);
@@ -291,7 +291,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
     };
 
     // Invoke the user's callback for each frame that was decoded
-    let context = &mut Context::new(event_loop, efs, outbox_pool, token, engine_session);
+    let context = &mut Context::new(event_loop, efs, outbox_pool, token, application);
     for frame in frames { // Process each and destroy the vector
       debug!("Invoking on_frame for {:?}", token);
       handler.on_frame(context, frame);
@@ -348,7 +348,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
            codec: &mut P::Codec,
            handler: &mut P::Handler,
            token: Token,
-           efs: &mut EventedFrameStream<P>, engine_session: &mut P::EngineSession,
+           efs: &mut EventedFrameStream<P>, application: &mut P::Application,
            buffer_pool: &mut Pool<Buffer>,
            outbox_pool: &mut Pool<Outbox<P::Frame>>) {
     let state = efs.state;
@@ -356,12 +356,12 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
       NotReady => { // The 'writable' event signals a fully connected socket
         debug!("Stream for {:?} is Ready.", token);
         efs.state = Ready;
-        handler.on_ready(&mut Context::new(event_loop, efs, outbox_pool, token, engine_session));
-        FrameEngine::write(event_loop, codec, handler, token, efs, engine_session, buffer_pool, outbox_pool);
+        handler.on_ready(&mut Context::new(event_loop, efs, outbox_pool, token, application));
+        FrameEngine::write(event_loop, codec, handler, token, efs, application, buffer_pool, outbox_pool);
       },
       Ready => {
         trace!("Stream for {:?} can be written to.", token);
-        FrameEngine::write(event_loop, codec, handler, token, efs, engine_session, buffer_pool, outbox_pool);
+        FrameEngine::write(event_loop, codec, handler, token, efs, application, buffer_pool, outbox_pool);
       },
       Done => {
         debug!("'Writable' event on 'Done' stream. {:?}", token); 
@@ -373,7 +373,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
            codec: &mut P::Codec,
            handler: &mut P::Handler,
            token: Token,
-           efs: &mut EventedFrameStream<P>, engine_session: &mut P::EngineSession,
+           efs: &mut EventedFrameStream<P>, application: &mut P::Application,
            buffer_pool: &mut Pool<Buffer>,
            outbox_pool: &mut Pool<Outbox<P::Frame>>) -> Result<(), Error> {
     match Self::encode_frames(codec, token, efs, buffer_pool, outbox_pool) {
@@ -384,7 +384,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
         error!("Encountered an encoding error for {:?}", token);
         let error = Encoding(error);
         handler.on_error(
-          &mut Context::new(event_loop, efs, outbox_pool, token, engine_session),
+          &mut Context::new(event_loop, efs, outbox_pool, token, application),
           &error
         );
         return Err(error);
@@ -398,7 +398,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
         error!("Encountered an I/O error for {:?}: {:?}", token, io_error);
         let error = Io(io_error);
         handler.on_error(
-          &mut Context::new(event_loop, efs, outbox_pool, token, engine_session),
+          &mut Context::new(event_loop, efs, outbox_pool, token, application),
           &error
         );
         return Err(error);

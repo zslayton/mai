@@ -11,6 +11,6 @@ pub trait Protocol {
   type Codec: Codec<Self::Frame>;
   type Handler: Handler<Self>;
   type Timeout: Send + Debug;
-  type EngineSession : Default;
   type Session: Default;
+  type Application: Default;
 }
