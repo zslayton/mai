@@ -1,6 +1,6 @@
 use std::io;
 use std::net::SocketAddr;
-use mio::{EventLoop, Token};
+use mio::{self, EventLoop, Token};
 use mio::tcp::TcpStream;
 use lifeguard::Pool;
 
@@ -17,7 +17,6 @@ pub struct Context<'a, P: ?Sized> where
     efs: &'a mut EventedFrameStream<P>,
     token: Token,
     outbox_pool: &'a mut Pool<Outbox<P::Frame>>,
-    application: &'a mut P::Application,
 }
 
 pub struct EngineHandle<'handle, 'context: 'handle, P: ?Sized> where
@@ -35,12 +34,8 @@ pub struct StreamHandle<'handle, 'context: 'handle, P: ?Sized> where
 impl <'handle, 'context: 'handle, P: ?Sized> EngineHandle<'handle, 'context, P> where 
   P: 'context + Protocol
   {
-  pub fn application(&mut self) -> &mut P::Application {
-    self.context.application
-  }
-
-  pub fn timeout_ms(&mut self, timeout: P::Timeout, milliseconds: u64) {
-    self.context.event_loop.timeout_ms(timeout, milliseconds);
+  pub fn timeout_ms(&mut self, timeout_token: P::Timeout, milliseconds: u64) -> mio::TimerResult<mio::Timeout> {
+    self.context.event_loop.timeout_ms(timeout_token, milliseconds)
   }
 }
 
@@ -52,7 +47,7 @@ impl <'handle, 'context: 'handle, P: ?Sized> StreamHandle<'handle, 'context, P> 
     self.context.token
   }
 
-  pub fn send(&mut self, frame: P::Frame) {
+  pub fn send(&mut self, frame: P::Frame) -> io::Result<()> {
     let Context {
       ref mut event_loop,
       ref mut efs,
@@ -60,7 +55,7 @@ impl <'handle, 'context: 'handle, P: ?Sized> StreamHandle<'handle, 'context, P> 
       ref mut outbox_pool,
       ..
     } = *self.context;
-    efs.send(event_loop, token, outbox_pool, frame);
+    efs.send(event_loop, token, outbox_pool, frame)
   }
 
   pub fn session(&mut self) -> &mut P::Session {
@@ -88,14 +83,12 @@ impl <'a, P: ?Sized> Context<'a, P> where
       event_loop: &'a mut EventLoop<FrameEngine<P>>,
       efs: &'a mut EventedFrameStream<P>,
       outbox_pool: &'a mut Pool<Outbox<P::Frame>>,
-      token: Token,
-      application: &'a mut P::Application) -> Context<'a, P> {
+      token: Token) -> Context<'a, P> {
     Context {
       event_loop: event_loop,
       efs: efs,
       token: token,
-      outbox_pool: outbox_pool,
-      application: application
+      outbox_pool: outbox_pool
     }
   }
 

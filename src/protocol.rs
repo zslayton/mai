@@ -12,5 +12,4 @@ pub trait Protocol {
   type Handler: Handler<Self>;
   type Timeout: Send + Debug;
   type Session: Default;
-  type Application: Default;
 }

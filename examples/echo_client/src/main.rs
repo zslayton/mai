@@ -17,7 +17,6 @@ impl Protocol for EchoClient {
   type Handler = EchoClientHandler;
   type Timeout = usize;
   type Session = ();
-  type EngineSession = ();
 }
 
 impl Codec<String> for EchoCodec {

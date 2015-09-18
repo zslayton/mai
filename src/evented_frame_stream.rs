@@ -2,7 +2,13 @@ use lifeguard::{RcRecycled, Pool};
 use mio::{EventLoop, EventSet, Token, PollOpt};
 
 use std::collections::VecDeque;
+use std::io;
 
+use Context;
+use Handler;
+use Error;
+use Error::*;
+use StreamState::*;
 use Protocol;
 use Buffer;
 use FrameEngine;
@@ -85,7 +91,7 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
   }
 
   // TODO: Remove State
-  pub fn reading_toolset(&mut self, buffer_pool: &mut Pool<Buffer>) -> (&mut P::ByteStream, &mut Buffer, &mut StreamState) {
+  pub fn reading_toolset(&mut self, buffer_pool: &mut Pool<Buffer>) -> (&mut P::ByteStream, &mut Buffer) {
     if self.read_buffer.is_none() {
       debug!("Getting a read_buffer from the pool.");
       self.read_buffer = Some(buffer_pool.new_rc());
@@ -93,15 +99,14 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
     let EventedFrameStream {
       ref mut stream,
       ref mut read_buffer,
-      ref mut state,
       ..
     } = *self;
-    (stream, read_buffer.as_mut().unwrap(), state)
+    (stream, read_buffer.as_mut().unwrap())
   }
 
   // TODO: Split into encoding_toolset and writing_toolset?
   // Currently an outbox will be allocated if absent, which is silly
-  pub fn writing_toolset(&mut self, buffer_pool: &mut Pool<Buffer>, outbox_pool: &mut Pool<Outbox<P::Frame>>) -> (&mut P::ByteStream, &mut Buffer, &mut Outbox<P::Frame>, &mut StreamState) {
+  pub fn writing_toolset(&mut self, buffer_pool: &mut Pool<Buffer>, outbox_pool: &mut Pool<Outbox<P::Frame>>) -> (&mut P::ByteStream, &mut Buffer, &mut Outbox<P::Frame>) {
     if self.write_buffer.is_none() {
       debug!("Getting a write_buffer from the pool.");
       self.write_buffer = Some(buffer_pool.new_rc());
@@ -114,10 +119,9 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
       ref mut stream,
       ref mut write_buffer,
       ref mut outbox,
-      ref mut state,
         ..
     } = *self;
-    (stream, write_buffer.as_mut().unwrap(), outbox.as_mut().unwrap(), state)
+    (stream, write_buffer.as_mut().unwrap(), outbox.as_mut().unwrap())
   }
   pub fn read_buffer(&mut self, buffer_pool: &mut Pool<Buffer>) -> &mut Buffer {
     if self.read_buffer.is_none() {
@@ -145,23 +149,22 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
 
   pub fn register_interest_in_writing (
     &self, 
-    event_loop: 
-    &mut EventLoop<FrameEngine<P>>,
-    token: Token) {
+    event_loop: &mut EventLoop<FrameEngine<P>>,
+    token: Token) -> io::Result<()> {
       debug!("Registering interest in writable event.");
       event_loop.reregister(
         &self.stream,
         token,
         EventSet::all(),
         PollOpt::level()
-      );
+      )
   }
   
   pub fn deregister_interest_in_writing (
     &self, 
     event_loop: 
     &mut EventLoop<FrameEngine<P>>,
-    token: Token) {
+    token: Token) -> io::Result<()> {
       debug!("De-registering interest in writable event.");
       let mut interests = EventSet::all();
       interests.remove(EventSet::writable());
@@ -170,7 +173,22 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
         token,
         interests, 
         PollOpt::level()
-      );
+      )
+  }
+
+  pub fn on_error(
+    &mut self,
+    event_loop: &mut EventLoop<FrameEngine<P>>,
+    token: Token,
+    outbox_pool: &mut Pool<Outbox<P::Frame>>,
+    handler: &mut P::Handler,
+    error: &Error) {
+      if let Io(_) = *error {
+        debug!("{:?} encountered an i/o error. Setting state to 'Done'.", token);
+        self.state = Done;
+      } //TODO: Other non-fatal error types should move state to 'ShuttingDown'
+      let context = &mut Context::new(event_loop, self, outbox_pool, token);
+      handler.on_error(context, error);
   }
 
   pub fn send (
@@ -178,16 +196,17 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
     event_loop: &mut EventLoop<FrameEngine<P>>,
     token: Token,
     outbox_pool: &mut Pool<Outbox<P::Frame>>,
-    frame: P::Frame) {
+    frame: P::Frame) -> io::Result<()> {
   
     // If we weren't waiting to write before this, register interest
     // in case we had deregistered it previously.
     if !self.has_bytes_to_write() { 
-      self.register_interest_in_writing(event_loop, token);
+      try!(self.register_interest_in_writing(event_loop, token))
     }   
 
     // Get the outbox (from the pool if necessary) and add our frame
     self.outbox(outbox_pool).push_back(frame);
     debug!("New message in outbox.");
+    Ok(())
   }
 }
