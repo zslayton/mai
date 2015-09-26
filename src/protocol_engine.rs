@@ -201,7 +201,7 @@ impl <P: ?Sized> ProtocolEngine<P> where P: Protocol {
     let buffer_pool = lifeguard::pool()
         .with(StartingSize(buffer_pool_size))
         .with(MaxSize(max_buffer_pool_size))
-        .with(Supplier::new(move || Buffer::with_capacity(starting_buffer_size)))
+        .with(Supplier(move || Buffer::with_capacity(starting_buffer_size)))
         .build();
 
     let outbox_pool: Pool<Outbox<P::Frame>> = lifeguard::pool()
