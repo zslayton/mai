@@ -95,17 +95,12 @@ fn main() {
   let socket = TcpSocket::v4().unwrap();
   let (stream, _complete) = socket.connect(&address).unwrap();
   
-  let mut frame_engine: FrameEngine<EchoClient> =
-      mai::frame_engine(EchoClientHandler)
+  let mut protocol_engine: ProtocolEngine<EchoClient> =
+      mai::protocol_engine(EchoClientHandler)
         .with(InitialBufferSize(Kilobytes(32)))
         .with(InitialBufferPoolSize(16))
         .with(MaxBufferPoolSize(128))
         .build();
-  let token = frame_engine.manage(stream);
-  let thread_handle = std::thread::spawn(||{
-    println!("Firing up the engine in a new thread...");
-    let _ = frame_engine.run();
-  });
-  println!("Awaiting engine...");
-  thread_handle.join();
+  let token = protocol_engine.manage(stream);
+  let _ = protocol_engine.run();
 }
