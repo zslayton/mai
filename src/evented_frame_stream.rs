@@ -14,7 +14,7 @@ use Error::*;
 use StreamState::*;
 use Protocol;
 use Buffer;
-use FrameEngine;
+use ProtocolEngine;
 
 #[derive(Debug,Clone,Copy)]
 pub enum StreamState {
@@ -156,7 +156,7 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
 
   pub fn register_interest_in_writing (
     &self, 
-    event_loop: &mut EventLoop<FrameEngine<P>>,
+    event_loop: &mut EventLoop<ProtocolEngine<P>>,
     token: Token) -> io::Result<()> {
       debug!("Registering interest in writable event.");
       event_loop.reregister(
@@ -170,7 +170,7 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
   pub fn deregister_interest_in_writing (
     &self, 
     event_loop: 
-    &mut EventLoop<FrameEngine<P>>,
+    &mut EventLoop<ProtocolEngine<P>>,
     token: Token) -> io::Result<()> {
       debug!("De-registering interest in writable event.");
       let mut interests = EventSet::all();
@@ -185,7 +185,7 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
 
   pub fn on_error(
     &mut self,
-    event_loop: &mut EventLoop<FrameEngine<P>>,
+    event_loop: &mut EventLoop<ProtocolEngine<P>>,
     token: Token,
     outbox_pool: &mut Pool<Outbox<P::Frame>>,
     command_sender: &mut MioSender<Command<P>>,
@@ -201,7 +201,7 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
 
   pub fn send (
     &mut self,
-    event_loop: &mut EventLoop<FrameEngine<P>>,
+    event_loop: &mut EventLoop<ProtocolEngine<P>>,
     token: Token,
     outbox_pool: &mut Pool<Outbox<P::Frame>>,
     frame: P::Frame) -> io::Result<()> {

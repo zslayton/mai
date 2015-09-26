@@ -1,4 +1,4 @@
-use FrameEngineBuilder;
+use ProtocolEngineBuilder;
 use Protocol;
 
 pub trait OptionSetter<T> {
@@ -40,8 +40,8 @@ pub struct InitialBufferSize<T>(pub T) where T: ToBytes;
 pub struct InitialBufferPoolSize(pub usize);
 pub struct MaxBufferPoolSize(pub usize);
 
-impl <P, T> OptionSetter<FrameEngineBuilder<P>> for InitialBufferSize<T> where P: Protocol, T: ToBytes {
-  fn set_option(self, mut builder: FrameEngineBuilder<P>) -> FrameEngineBuilder<P> {
+impl <P, T> OptionSetter<ProtocolEngineBuilder<P>> for InitialBufferSize<T> where P: Protocol, T: ToBytes {
+  fn set_option(self, mut builder: ProtocolEngineBuilder<P>) -> ProtocolEngineBuilder<P> {
     let InitialBufferSize(size) = self;
     let number_of_bytes: Bytes = size.to_bytes();
     builder.starting_buffer_size = number_of_bytes;
@@ -49,16 +49,16 @@ impl <P, T> OptionSetter<FrameEngineBuilder<P>> for InitialBufferSize<T> where P
   }
 }
 
-impl <P> OptionSetter<FrameEngineBuilder<P>> for InitialBufferPoolSize where P: Protocol {
-  fn set_option(self, mut builder: FrameEngineBuilder<P>) -> FrameEngineBuilder<P> {
+impl <P> OptionSetter<ProtocolEngineBuilder<P>> for InitialBufferPoolSize where P: Protocol {
+  fn set_option(self, mut builder: ProtocolEngineBuilder<P>) -> ProtocolEngineBuilder<P> {
     let InitialBufferPoolSize(number_of_buffers) = self;
     builder.buffer_pool_size = number_of_buffers;
     builder
   }
 }
 
-impl <P> OptionSetter<FrameEngineBuilder<P>> for MaxBufferPoolSize where P: Protocol {
-  fn set_option(self, mut builder: FrameEngineBuilder<P>) -> FrameEngineBuilder<P> {
+impl <P> OptionSetter<ProtocolEngineBuilder<P>> for MaxBufferPoolSize where P: Protocol {
+  fn set_option(self, mut builder: ProtocolEngineBuilder<P>) -> ProtocolEngineBuilder<P> {
     let MaxBufferPoolSize(number_of_buffers) = self;
     builder.max_buffer_pool_size = number_of_buffers;
     builder

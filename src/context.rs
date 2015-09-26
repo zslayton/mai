@@ -8,7 +8,7 @@ use lifeguard::Pool;
 
 use Protocol;
 use Command;
-use FrameEngine;
+use ProtocolEngine;
 use EventedFrameStream;
 
 use evented_frame_stream::Outbox;
@@ -16,7 +16,7 @@ use evented_frame_stream::Outbox;
 pub struct Context<'a, P: ?Sized> where
   P: 'a + Protocol
   {
-    event_loop: &'a mut EventLoop<FrameEngine<P>>,
+    event_loop: &'a mut EventLoop<ProtocolEngine<P>>,
     efs: &'a mut EventedFrameStream<P>,
     token: Token,
     outbox_pool: &'a mut Pool<Outbox<P::Frame>>,
@@ -101,7 +101,7 @@ impl <'a, P: ?Sized> Context<'a, P> where
   P: 'a + Protocol
   {
   pub fn new(
-      event_loop: &'a mut EventLoop<FrameEngine<P>>,
+      event_loop: &'a mut EventLoop<ProtocolEngine<P>>,
       efs: &'a mut EventedFrameStream<P>,
       outbox_pool: &'a mut Pool<Outbox<P::Frame>>,
       command_sender: &'a mut MioSender<Command<P>>,

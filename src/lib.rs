@@ -7,7 +7,7 @@ extern crate slab;
 extern crate lifeguard;
 
 mod evented_frame_stream;
-mod frame_engine;
+mod protocol_engine;
 mod protocol;
 mod codec;
 mod buffer;
@@ -29,20 +29,20 @@ pub use error::Error;
 pub use buffer::Buffer;
 pub use handler::Handler;
 pub use context::Context;
-pub use remote::FrameEngineRemote;
+pub use remote::ProtocolEngineRemote;
 pub use evented_byte_stream::EventedByteStream;
 pub use evented_frame_stream::EventedFrameStream;
 pub use evented_frame_stream::StreamState;
 pub use evented_frame_stream::Outbox;
-pub use frame_engine::FrameEngine;
-pub use frame_engine::FrameEngineBuilder;
-pub use frame_engine::Command;
+pub use protocol_engine::ProtocolEngine;
+pub use protocol_engine::ProtocolEngineBuilder;
+pub use protocol_engine::Command;
 
 use mio::{EventLoop};
 
-pub fn frame_engine<P>(handler: P::Handler) -> frame_engine::FrameEngineBuilder<P> 
+pub fn protocol_engine<P>(handler: P::Handler) -> protocol_engine::ProtocolEngineBuilder<P> 
   where P: Protocol {
-  FrameEngineBuilder {
+  ProtocolEngineBuilder {
     handler: handler,
     event_loop: EventLoop::new().ok().expect("EventLoop creation failed."),
     starting_buffer_size: Kilobytes(32).to_bytes(),
