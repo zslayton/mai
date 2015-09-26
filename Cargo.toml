@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Zack Slayton <zslayton@us.ibm.com>"]
 
 [dependencies]
-lifeguard="0.4"
+lifeguard="0.5"
 mio="0.4"
 slab="0.1"
 log="0.3"

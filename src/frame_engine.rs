@@ -1,17 +1,16 @@
-use mio::{Evented, EventSet, EventLoop as MioEventLoop, Token};
+use mio::{Evented, EventSet, Token};
+use mio::EventLoop as MioEventLoop;
 use mio::Handler as MioHandler;
-use lifeguard::{Pool};
+use mio::Sender as MioSender;
+use lifeguard::{self, Recycleable, Pool, StartingSize, MaxSize, Supplier};
 
-use std::thread;
 use std::result::Result;
 use std::io::{self, Read, Write};
-use std::sync::mpsc::{channel, Sender};
 
 use stream_manager::StreamManager;
 use error::Error::{self, Io, Encoding, Decoding};
 
 use Protocol;
-use FrameEngineRemote;
 use Context;
 use Handler;
 use EventedFrameStream;
@@ -23,7 +22,6 @@ use codec::*;
 use settings::*;
 
 pub struct FrameEngineBuilder<P: ?Sized> where P: Protocol {
-  pub codec: P::Codec,
   pub handler: P::Handler,
   pub event_loop: MioEventLoop<FrameEngine<P>>,
   pub starting_buffer_size: Bytes,
@@ -36,17 +34,17 @@ pub enum Command<P: ?Sized> where P: Protocol {
   Manage(P::ByteStream),
   Send(Token, P::Frame),
 //  SendFrameToList(Vec<Token>, F),
-//  BroadcastFrame(F)
+  Broadcast(P::Frame)
 }
 
 pub struct FrameEngine<P: ?Sized> where P: Protocol {
   // TODO: Add server
+  pub event_loop: Option<MioEventLoop<FrameEngine<P>>>,
   pub streams: StreamManager<P>,
   pub buffer_pool: Pool<Buffer>,
   pub outbox_pool: Pool<Outbox<P::Frame>>,
-  pub codec: P::Codec,
   pub handler: P::Handler,
-  pub sender: Sender<()>,
+  pub command_sender: MioSender<Command<P>>,
 }
 
 unsafe impl <P: ?Sized> Sync for FrameEngine<P> where P : Protocol {}
@@ -58,27 +56,17 @@ impl <P: ?Sized> FrameEngineBuilder<P> where P: Protocol + 'static {
     option_setter.set_option(self)
   }
     
-  pub fn run(self) -> FrameEngineRemote<P> {
-    let mut event_loop: MioEventLoop<FrameEngine<P>> = self.event_loop;
-    let codec = self.codec;
-    let handler = self.handler;
-    let buffer_pool_size = self.buffer_pool_size;
-    let max_buffer_pool_size = self.max_buffer_pool_size;
-    let starting_buffer_size = self.starting_buffer_size;
-    let command_sender = event_loop.channel();
-    let (sender, receiver) = channel();
-    let frame_engine_remote = FrameEngineRemote::new(command_sender, receiver);
-    let _ = thread::spawn(move || {
-      let mut frame_engine : FrameEngine<P> = FrameEngine::new(
-          codec, 
-          handler,
-          sender,
-          buffer_pool_size,
-          max_buffer_pool_size,
-          starting_buffer_size);
-      let _ = event_loop.run(&mut frame_engine);
-    });
-    frame_engine_remote
+  pub fn build(self) -> FrameEngine<P> {
+    let command_sender = self.event_loop.channel();
+    let frame_engine : FrameEngine<P> = FrameEngine::new(
+        self.event_loop,
+        self.handler,
+        command_sender,
+        self.buffer_pool_size,
+        self.max_buffer_pool_size,
+        self.starting_buffer_size
+    );
+    frame_engine
   }
 }
 
@@ -95,12 +83,21 @@ impl <P: ?Sized> MioHandler for FrameEngine<P> where P: Protocol {
       },
       Manage(evented_byte_stream) => {
         debug!("Received Manage command. Registering new EventedByteStream.");
-        self.manage(event_loop, evented_byte_stream);
+        let streams = &mut self.streams;
+        Self::manage_stream(streams, event_loop, evented_byte_stream);
       },
       Send(token, frame) => {
-        debug!("Received Send command. Sending frome to {:?}", token);
-        match self.send(event_loop, token, frame) {
+        debug!("Received Send command. Sending frame to {:?}", token);
+        let (streams, outbox_pool) = (&mut self.streams, &mut self.outbox_pool);
+        match Self::send_frame(streams, outbox_pool, event_loop, token, frame) {
           Err(error) => error!("Failed to send to {:?}: {:?}", token, error),
+          _ => {}
+        }
+      },
+      Broadcast(frame) => {
+        debug!("Received Broadcast command. Sending frame to all streams.");
+        match self.broadcast(event_loop, frame) {
+          Err(error) => error!("Failed to broadcast message: {:?}", error),
           _ => {}
         }
       }
@@ -115,8 +112,8 @@ impl <P: ?Sized> MioHandler for FrameEngine<P> where P: Protocol {
       ref mut streams,
       ref mut buffer_pool,
       ref mut outbox_pool,
-      ref mut codec,
       ref mut handler,
+      ref mut command_sender,
       ..
     } = *self;
 
@@ -127,33 +124,33 @@ impl <P: ?Sized> MioHandler for FrameEngine<P> where P: Protocol {
 
         if event_set.is_writable() {
           if let Err(error) = FrameEngine::on_writable(event_loop,
-                                                       codec,
                                                        handler,
                                                        token,
                                                        efs,
                                                        buffer_pool,
-                                                       outbox_pool) {
-            efs.on_error(event_loop, token, outbox_pool, handler, &error);
+                                                       outbox_pool,
+                                                       command_sender) {
+            efs.on_error(event_loop, token, outbox_pool, command_sender, handler, &error);
           }
           if efs.has_bytes_to_write() {
             debug!("{:?} is still waiting to write.", token);
           } else {
             debug!("No more to write for {:?}, deregistering interest in writes", token);
             if let Err(error) = efs.deregister_interest_in_writing(event_loop, token) {
-              efs.on_error(event_loop, token, outbox_pool, handler, &Io(error));
+              efs.on_error(event_loop, token, outbox_pool, command_sender, handler, &Io(error));
             }
           }
         }
 
         if event_set.is_readable() {
           if let Err(error) = FrameEngine::on_readable(event_loop, 
-                                                      codec, 
                                                       handler, 
                                                       token, 
                                                       efs, 
                                                       buffer_pool, 
-                                                      outbox_pool) {
-            efs.on_error(event_loop, token, outbox_pool, handler, &error);
+                                                      outbox_pool,
+                                                      command_sender) {
+            efs.on_error(event_loop, token, outbox_pool, command_sender, handler, &error);
           }
         }
 
@@ -172,9 +169,9 @@ impl <P: ?Sized> MioHandler for FrameEngine<P> where P: Protocol {
         if let Done = efs.state {
           debug!("Shutting down stream. {:?}", token);
           if let Err(error) = event_loop.deregister(&efs.stream) {
-            efs.on_error(event_loop, token, outbox_pool, handler, &Io(error));
+            efs.on_error(event_loop, token, outbox_pool, command_sender, handler, &Io(error));
           }
-          handler.on_closed(&mut Context::new(event_loop, efs, outbox_pool, token));
+          handler.on_closed(&mut Context::new(event_loop, efs, outbox_pool, command_sender, token));
           stream_is_done = true;
         } else {
           efs.release_empty_buffers();
@@ -194,67 +191,102 @@ impl <P: ?Sized> MioHandler for FrameEngine<P> where P: Protocol {
 
   fn interrupted(&mut self, _event_loop: &mut MioEventLoop<Self>) {
     debug!("Interrupted");
+    //TODO: Expose/Propagate?
   }
 }
 
 impl <P: ?Sized> FrameEngine<P> where P: Protocol {
-  pub fn new(codec: P::Codec, handler: P::Handler, sender: Sender<()>, buffer_pool_size: usize, max_buffer_pool_size: usize, _starting_buffer_size: Bytes) -> FrameEngine<P> {
-    //TODO: Use the starting_buffer_size setting. See issue #5.
+  pub fn new(event_loop: MioEventLoop<Self>, handler: P::Handler, command_sender: MioSender<Command<P>>, buffer_pool_size: usize, max_buffer_pool_size: usize, starting_buffer_size: Bytes) -> FrameEngine<P> {
+    let Bytes(starting_buffer_size) = starting_buffer_size;
+    let buffer_pool = lifeguard::pool()
+        .with(StartingSize(buffer_pool_size))
+        .with(MaxSize(max_buffer_pool_size))
+        .with(Supplier::new(move || Buffer::with_capacity(starting_buffer_size)))
+        .build();
+
+    let outbox_pool: Pool<Outbox<P::Frame>> = lifeguard::pool()
+        .with(StartingSize(buffer_pool_size))
+        .with(MaxSize(max_buffer_pool_size))
+        .build();
+
     FrameEngine {
+      event_loop: Some(event_loop),
       streams: StreamManager::new(),
-      buffer_pool: Pool::with_size_and_max(buffer_pool_size, max_buffer_pool_size),
-      outbox_pool: Pool::with_size_and_max(buffer_pool_size, max_buffer_pool_size),
-      codec: codec,
+      buffer_pool: buffer_pool, 
+      outbox_pool: outbox_pool, 
       handler: handler,
-      sender: sender
+      command_sender: command_sender
     }
   }
 
-  pub fn manage(&mut self, event_loop: &mut MioEventLoop<FrameEngine<P>>, evented_byte_stream: P::ByteStream) -> Token {
+  pub fn run(mut self) -> io::Result<()> {
+    let mut event_loop = self.event_loop.take().unwrap();
+    event_loop.run(&mut self)
+  }
+
+  pub fn manage(&mut self, evented_byte_stream: P::ByteStream) -> Token {
+    let(streams, event_loop) = (&mut self.streams, self.event_loop.as_mut().unwrap());
+    Self::manage_stream(streams, event_loop, evented_byte_stream)
+  }
+
+  fn manage_stream(streams: &mut StreamManager<P>, event_loop: &mut MioEventLoop<FrameEngine<P>>, evented_byte_stream: P::ByteStream) -> Token {
     let evented_frame_stream = EventedFrameStream::new(evented_byte_stream);
-    let token = self.streams.insert(evented_frame_stream);
-    let efs = self.streams.get_mut(token).expect("Missing just-inserted EventedFrameStream");
+    let token = streams.insert(evented_frame_stream);
+    let efs = streams.get_mut(token).expect("Missing just-inserted EventedFrameStream");
     //TODO: Handle error?
     let _ = event_loop.register(&efs.stream, token).unwrap();
     token
   }
 
-  pub fn send(&mut self, event_loop: &mut MioEventLoop<FrameEngine<P>>, token: Token, frame: P::Frame) -> io::Result<()> { //TODO: Formal error type
-    let FrameEngine {
-      ref mut streams,
-      ref mut outbox_pool,
-      ..
-    } = *self;
-    // Get the appropriate efs
-    // TODO: Break this into its own helper function
+  fn broadcast(&mut self, _event_loop: &mut MioEventLoop<FrameEngine<P>>, _frame: P::Frame) -> io::Result<()> {
+      Ok(())
+//    for token in self
+//    //TODO: Expose stream iteration in the stream manager, then finish this
+  }
+
+  pub fn send_frame(
+      streams: &mut StreamManager<P>,
+      outbox_pool: &mut Pool<Outbox<P::Frame>>,
+      event_loop: &mut MioEventLoop<FrameEngine<P>>,
+      token: Token,
+      frame: P::Frame) -> io::Result<()> {
     let efs: &mut EventedFrameStream<P> = match streams.get_mut(token) {
       Some(efs) => efs,
       None => return Err(io::Error::new(io::ErrorKind::NotFound, "No such token."))
     };
-   
     match efs.send(event_loop, token, outbox_pool, frame) {
       Ok(_) => Ok(()),
       Err(error) => Err(error)
     }
   }
 
+  pub fn send(&mut self, token: Token, frame: P::Frame) -> io::Result<()> {
+    let FrameEngine {
+      ref mut streams,
+      ref mut outbox_pool,
+      ref mut event_loop,
+      ..
+    } = *self;
+    Self::send_frame(streams, outbox_pool, event_loop.as_mut().unwrap(), token, frame)
+  }
+
   fn on_readable(event_loop: &mut MioEventLoop<FrameEngine<P>>,
-          codec: &mut P::Codec,
           handler: &mut P::Handler,
           token: Token,
           efs: &mut EventedFrameStream<P>, 
           buffer_pool: &mut Pool<Buffer>,
-          outbox_pool: &mut Pool<Outbox<P::Frame>>) -> Result<(), Error> {
+          outbox_pool: &mut Pool<Outbox<P::Frame>>,
+          command_sender: &mut MioSender<Command<P>>) -> Result<(), Error> {
     match efs.state {
       NotReady => { // The 'readable' event signals a fully connected socket
         debug!("Stream for {:?} is now Ready.", token);
         efs.state = Ready;
-        handler.on_ready(&mut Context::new(event_loop, efs, outbox_pool, token));
-        FrameEngine::read(event_loop, codec, handler, token, efs, buffer_pool, outbox_pool)
+        handler.on_ready(&mut Context::new(event_loop, efs, outbox_pool, command_sender, token));
+        FrameEngine::read(event_loop, handler, token, efs, buffer_pool, outbox_pool, command_sender)
       },
       Ready => {
         debug!("Stream for {:?} can be read.", token);
-        FrameEngine::read(event_loop, codec, handler, token, efs, buffer_pool, outbox_pool)
+        FrameEngine::read(event_loop, handler, token, efs, buffer_pool, outbox_pool, command_sender)
       },
       Done => {
         debug!("'Readable' event on 'Done' stream. {:?}", token);
@@ -264,12 +296,12 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
   }
 
   fn read(event_loop: &mut MioEventLoop<FrameEngine<P>>,
-          codec: &mut P::Codec,
           handler: &mut P::Handler,
           token: Token,
           efs: &mut EventedFrameStream<P>, 
           buffer_pool: &mut Pool<Buffer>,
-          outbox_pool: &mut Pool<Outbox<P::Frame>>) -> Result<(), Error> {
+          outbox_pool: &mut Pool<Outbox<P::Frame>>,
+          command_sender: &mut MioSender<Command<P>>) -> Result<(), Error> {
     let mut frames = Vec::new(); // TODO: Store one in FrameEngine and re-use it
     // Read bytes into a buffer
     match Self::read_bytes(efs, token, buffer_pool) {
@@ -292,23 +324,26 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
       return Ok(());
     }
     // If the read was successful, try to decode frames from the bytes
-    // read_bytes 
-    match Self::decode_frames(
-        token,
-        codec, 
-        &mut efs.read_buffer.as_mut().unwrap(),
-        &mut frames) {
-      Ok(_) => {
-        debug!("Decoding complete. {} frames decoded.", frames.len());
-      },
-      Err(decoding_error) => {
-        error!("Encountered a decoding error: {:?}", decoding_error);
-        return Err(Decoding(decoding_error));
-      }
-    };
+    // read_bytes
+    { // efs borrow scope
+      let (codec, read_buffer): (&mut P::Codec, &mut Buffer) = (&mut efs.codec, &mut efs.read_buffer.as_mut().unwrap());
+      match Self::decode_frames(
+          codec,
+          token,
+          read_buffer,
+          &mut frames) {
+        Ok(_) => {
+          debug!("Decoding complete. {} frames decoded.", frames.len());
+        },
+        Err(decoding_error) => {
+          error!("Encountered a decoding error: {:?}", decoding_error);
+          return Err(Decoding(decoding_error));
+        }
+      };
+    }
 
     // Invoke the user's callback for each frame that was decoded
-    let context = &mut Context::new(event_loop, efs, outbox_pool, token);
+    let context = &mut Context::new(event_loop, efs, outbox_pool, command_sender, token);
     for frame in frames { // Process each and destroy the vector
       debug!("Invoking on_frame for {:?}", token);
       handler.on_frame(context, frame);
@@ -320,7 +355,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
                  token: Token,
                  buffer_pool: &mut Pool<Buffer>) -> io::Result<BytesRead> {
     debug!("Reading bytes for {:?}", token);
-    let (stream, mut read_buffer) = efs.reading_toolset(buffer_pool);
+    let (_codec, stream, mut read_buffer) = efs.reading_toolset(buffer_pool);
     match stream.read_into_buffer(&mut read_buffer) {
       Ok(bytes_read) => Ok(BytesRead(bytes_read)),
       Err(io_error) => Err(io_error)
@@ -328,8 +363,8 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
   }
 
   fn decode_frames(
+      codec: &mut P::Codec,
       token: Token,
-      codec: &mut P::Codec, 
       buffer: &mut Buffer, 
       frames: &mut Vec<P::Frame>) -> Result<(), DecodingError> {
     debug!("Decoding frames for {:?}", token);
@@ -362,23 +397,23 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
   }
 
   fn on_writable(event_loop: &mut MioEventLoop<FrameEngine<P>>,
-           codec: &mut P::Codec,
            handler: &mut P::Handler,
            token: Token,
            efs: &mut EventedFrameStream<P>, 
            buffer_pool: &mut Pool<Buffer>,
-           outbox_pool: &mut Pool<Outbox<P::Frame>>) -> Result<(), Error> {
+           outbox_pool: &mut Pool<Outbox<P::Frame>>,
+           command_sender: &mut MioSender<Command<P>>) -> Result<(), Error> {
     let state = efs.state;
     match state {
       NotReady => { // The 'writable' event signals a fully connected socket
         debug!("Stream for {:?} is Ready.", token);
         efs.state = Ready;
-        handler.on_ready(&mut Context::new(event_loop, efs, outbox_pool, token));
-        FrameEngine::write(codec, token, efs, buffer_pool, outbox_pool)
+        handler.on_ready(&mut Context::new(event_loop, efs, outbox_pool, command_sender, token));
+        FrameEngine::write(token, efs, buffer_pool, outbox_pool)
       },
       Ready => {
         trace!("Stream for {:?} can be written to.", token);
-        FrameEngine::write(codec, token, efs, buffer_pool, outbox_pool)
+        FrameEngine::write(token, efs, buffer_pool, outbox_pool)
       },
       Done => {
         debug!("'Writable' event on 'Done' stream. {:?}", token); 
@@ -387,12 +422,11 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
     }
   }
 
-  fn write(codec: &mut P::Codec,
-           token: Token,
+  fn write(token: Token,
            efs: &mut EventedFrameStream<P>, 
            buffer_pool: &mut Pool<Buffer>,
            outbox_pool: &mut Pool<Outbox<P::Frame>>) -> Result<(), Error> {
-    match Self::encode_frames(codec, token, efs, buffer_pool, outbox_pool) {
+    match Self::encode_frames(token, efs, buffer_pool, outbox_pool) {
       Ok(_) => {
         debug!("Encoding complete for {:?}", token);
       },
@@ -417,14 +451,13 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
   // and then write as much of that buffer into the stream as possible without
   // blocking.
   fn encode_frames(
-                  codec: &mut P::Codec,
                   token: Token,
                   efs: &mut EventedFrameStream<P>,
                   buffer_pool: &mut Pool<Buffer>,
                   outbox_pool: &mut Pool<Outbox<P::Frame>>) -> Result<(), EncodingError> {
    
     // References to the efs components we'll need for serializing
-    let (_stream, mut write_buffer, outbox) = efs.writing_toolset(buffer_pool, outbox_pool);
+    let (codec, _stream, mut write_buffer, outbox) = efs.writing_toolset(buffer_pool, outbox_pool);
 
     // Serialize frames into the buffer until it's full
     // or we've run out of frames
@@ -466,7 +499,7 @@ impl <P: ?Sized> FrameEngine<P> where P: Protocol {
                  buffer_pool: &mut Pool<Buffer>,
                  outbox_pool: &mut Pool<Outbox<P::Frame>>) -> io::Result<BytesWritten> {
     // TODO: This may not be necessary; values are guaranteed to be in place?
-    let (stream, mut write_buffer, _outbox) = efs.writing_toolset(buffer_pool, outbox_pool);
+    let (_codec, stream, mut write_buffer, _outbox) = efs.writing_toolset(buffer_pool, outbox_pool);
 
     match stream.write_from_buffer(&mut write_buffer) {
       Ok(bytes_written) => {

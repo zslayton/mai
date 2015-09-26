@@ -2,9 +2,12 @@ use std::io;
 use std::net::SocketAddr;
 use mio::{self, EventLoop, Token};
 use mio::tcp::TcpStream;
+use mio::NotifyError;
+use mio::Sender as MioSender;
 use lifeguard::Pool;
 
 use Protocol;
+use Command;
 use FrameEngine;
 use EventedFrameStream;
 
@@ -17,6 +20,7 @@ pub struct Context<'a, P: ?Sized> where
     efs: &'a mut EventedFrameStream<P>,
     token: Token,
     outbox_pool: &'a mut Pool<Outbox<P::Frame>>,
+    command_sender: &'a mut MioSender<Command<P>> 
 }
 
 pub struct EngineHandle<'handle, 'context: 'handle, P: ?Sized> where
@@ -34,8 +38,25 @@ pub struct StreamHandle<'handle, 'context: 'handle, P: ?Sized> where
 impl <'handle, 'context: 'handle, P: ?Sized> EngineHandle<'handle, 'context, P> where 
   P: 'context + Protocol
   {
+  
   pub fn timeout_ms(&mut self, timeout_token: P::Timeout, milliseconds: u64) -> mio::TimerResult<mio::Timeout> {
     self.context.event_loop.timeout_ms(timeout_token, milliseconds)
+  }
+  
+  pub fn send(&mut self, token: Token, frame: P::Frame) -> Result<(), NotifyError<Command<P>>> {
+    let Context {
+      ref mut command_sender,
+      ..
+    } = *self.context;
+    command_sender.send(Command::Send(token, frame))
+  }
+
+  pub fn broadcast(&mut self, frame: P::Frame) -> Result<(), NotifyError<Command<P>>> {
+    let Context {
+      ref mut command_sender,
+      ..
+    } = *self.context;
+    command_sender.send(Command::Broadcast(frame))
   }
 }
 
@@ -83,12 +104,14 @@ impl <'a, P: ?Sized> Context<'a, P> where
       event_loop: &'a mut EventLoop<FrameEngine<P>>,
       efs: &'a mut EventedFrameStream<P>,
       outbox_pool: &'a mut Pool<Outbox<P::Frame>>,
+      command_sender: &'a mut MioSender<Command<P>>,
       token: Token) -> Context<'a, P> {
     Context {
       event_loop: event_loop,
       efs: efs,
       token: token,
-      outbox_pool: outbox_pool
+      outbox_pool: outbox_pool,
+      command_sender: command_sender
     }
   }
 

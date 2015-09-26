@@ -20,6 +20,11 @@ impl Protocol for EchoClient {
 }
 
 impl Codec<String> for EchoCodec {
+
+  fn new() -> Self {
+    EchoCodec
+  }
+    
   fn encode(&mut self, message: &String, buffer: &mut [u8]) -> EncodingResult {
     let bytes = message.as_bytes();
     if bytes.len() > buffer.len() {
@@ -89,7 +94,12 @@ fn main() {
   let socket = TcpSocket::v4().unwrap();
   let (stream, _complete) = socket.connect(&address).unwrap();
   
-  let frame_engine: FrameEngineRemote<EchoClient> = mai::frame_engine(EchoCodec, EchoClientHandler).run();
-  frame_engine.manage(stream);
-  frame_engine.wait();
+  let mut frame_engine: FrameEngine<EchoClient> =
+      mai::frame_engine(EchoClientHandler)
+        .with(InitialBufferSize(Kilobytes(32)))
+        .with(InitialBufferPoolSize(16))
+        .with(MaxBufferPoolSize(128))
+        .build();
+  let token = frame_engine.manage(stream);
+  let _ = frame_engine.run();
 }

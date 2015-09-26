@@ -1,9 +1,12 @@
 use lifeguard::{RcRecycled, Pool};
 use mio::{EventLoop, EventSet, Token, PollOpt};
+use mio::Sender as MioSender;
 
 use std::collections::VecDeque;
 use std::io;
 
+use Codec;
+use Command;
 use Context;
 use Handler;
 use Error;
@@ -26,6 +29,7 @@ pub type Outbox<F> = VecDeque<F>;
 pub struct EventedFrameStream<P: ?Sized> where P: Protocol {
   pub stream: P::ByteStream,
   pub state: StreamState,
+  pub codec: P::Codec,
   pub read_buffer: Option<RcRecycled<Buffer>>,
   pub write_buffer: Option<RcRecycled<Buffer>>,
   pub outbox: Option<RcRecycled<Outbox<P::Frame>>>,
@@ -37,6 +41,7 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
     EventedFrameStream {
       stream: ebs,
       state: StreamState::NotReady,
+      codec: P::Codec::new(),
       read_buffer: None,
       write_buffer: None,
       outbox: None,
@@ -90,8 +95,7 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
         || (!self.outbox.is_none() && self.outbox.as_ref().unwrap().len() > 0)
   }
 
-  // TODO: Remove State
-  pub fn reading_toolset(&mut self, buffer_pool: &mut Pool<Buffer>) -> (&mut P::ByteStream, &mut Buffer) {
+  pub fn reading_toolset(&mut self, buffer_pool: &mut Pool<Buffer>) -> (&mut P::Codec, &mut P::ByteStream, &mut Buffer) {
     if self.read_buffer.is_none() {
       debug!("Getting a read_buffer from the pool.");
       self.read_buffer = Some(buffer_pool.new_rc());
@@ -99,14 +103,15 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
     let EventedFrameStream {
       ref mut stream,
       ref mut read_buffer,
+      ref mut codec,
       ..
     } = *self;
-    (stream, read_buffer.as_mut().unwrap())
+    (codec, stream, read_buffer.as_mut().unwrap())
   }
 
   // TODO: Split into encoding_toolset and writing_toolset?
   // Currently an outbox will be allocated if absent, which is silly
-  pub fn writing_toolset(&mut self, buffer_pool: &mut Pool<Buffer>, outbox_pool: &mut Pool<Outbox<P::Frame>>) -> (&mut P::ByteStream, &mut Buffer, &mut Outbox<P::Frame>) {
+  pub fn writing_toolset(&mut self, buffer_pool: &mut Pool<Buffer>, outbox_pool: &mut Pool<Outbox<P::Frame>>) -> (&mut P::Codec, &mut P::ByteStream, &mut Buffer, &mut Outbox<P::Frame>) {
     if self.write_buffer.is_none() {
       debug!("Getting a write_buffer from the pool.");
       self.write_buffer = Some(buffer_pool.new_rc());
@@ -119,10 +124,12 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
       ref mut stream,
       ref mut write_buffer,
       ref mut outbox,
+      ref mut codec,
         ..
     } = *self;
-    (stream, write_buffer.as_mut().unwrap(), outbox.as_mut().unwrap())
+    (codec, stream, write_buffer.as_mut().unwrap(), outbox.as_mut().unwrap())
   }
+
   pub fn read_buffer(&mut self, buffer_pool: &mut Pool<Buffer>) -> &mut Buffer {
     if self.read_buffer.is_none() {
       debug!("Getting a read_buffer from the pool.");
@@ -181,13 +188,14 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
     event_loop: &mut EventLoop<FrameEngine<P>>,
     token: Token,
     outbox_pool: &mut Pool<Outbox<P::Frame>>,
+    command_sender: &mut MioSender<Command<P>>,
     handler: &mut P::Handler,
     error: &Error) {
       if let Io(_) = *error {
         debug!("{:?} encountered an i/o error. Setting state to 'Done'.", token);
         self.state = Done;
       } //TODO: Other non-fatal error types should move state to 'ShuttingDown'
-      let context = &mut Context::new(event_loop, self, outbox_pool, token);
+      let context = &mut Context::new(event_loop, self, outbox_pool, command_sender, token);
       handler.on_error(context, error);
   }
 

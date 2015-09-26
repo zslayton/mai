@@ -36,9 +36,9 @@ impl ToBytes for Megabytes {
   }
 }
 
-pub struct InitialBufferSize<T>(T) where T: ToBytes;
-pub struct InitialBufferPoolSize(usize);
-pub struct MaxBufferPoolSize(usize);
+pub struct InitialBufferSize<T>(pub T) where T: ToBytes;
+pub struct InitialBufferPoolSize(pub usize);
+pub struct MaxBufferPoolSize(pub usize);
 
 impl <P, T> OptionSetter<FrameEngineBuilder<P>> for InitialBufferSize<T> where P: Protocol, T: ToBytes {
   fn set_option(self, mut builder: FrameEngineBuilder<P>) -> FrameEngineBuilder<P> {

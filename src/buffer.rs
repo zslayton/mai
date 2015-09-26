@@ -1,7 +1,7 @@
 use lifeguard::{Recycleable};
 use std::fmt;
 
-const BUFFER_SIZE : usize = 16 * 1_024;
+const DEFAULT_BUFFER_SIZE : usize = 16 * 1_024;
 
 pub struct Buffer {
   bytes: Box<[u8]>,
@@ -27,7 +27,11 @@ impl Recycleable for Buffer {
 
 impl Buffer {
   pub fn new() -> Buffer {
-    let bytes = (0..BUFFER_SIZE)
+    Buffer::with_capacity(DEFAULT_BUFFER_SIZE)
+  }
+
+  pub fn with_capacity(capacity: usize) -> Buffer {
+    let bytes = (0..capacity)
         .map(|_| 0u8)
         .collect::<Vec<_>>()
         .into_boxed_slice();

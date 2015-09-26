@@ -37,6 +37,7 @@ pub type DecodingResult<F> = Result<DecodedFrame<F>, DecodingError>;
 pub type EncodingResult = Result<BytesWritten, EncodingError>;
 
 pub trait Codec<F> : Send {
+  fn new() -> Self;
   fn encode(&mut self, frame: &F, &mut [u8]) -> EncodingResult;
   fn decode(&mut self, &[u8]) -> DecodingResult<F>;
 }
