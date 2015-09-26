@@ -88,6 +88,7 @@ impl Handler<EchoClient> for EchoClientHandler {
 }
 
 fn main() {
+  use std;
   env_logger::init().unwrap();
   println!("Connecting to localhost:9999...");
   let address = "0.0.0.0:9999".parse().unwrap();
@@ -101,5 +102,10 @@ fn main() {
         .with(MaxBufferPoolSize(128))
         .build();
   let token = frame_engine.manage(stream);
-  let _ = frame_engine.run();
+  let thread_handle = std::thread::spawn(||{
+    println!("Firing up the engine in a new thread...");
+    let _ = frame_engine.run();
+  });
+  println!("Awaiting engine...");
+  thread_handle.join();
 }
