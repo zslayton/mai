@@ -1,10 +1,8 @@
 # mai
-A thin I/O layer built on top of [`mio`](https://github.com/carllerche/mio) that manages buffers and streams so you can focus
-on sending and receiving your protocol's frames. If you're writing a client or
-server for on top of TCP, this is the library for you.
+A higher-level event loop built on top of [`mio`](https://github.com/carllerche/mio). `mai` manages buffers and streams so you can focus on sending and receiving your protocol's frames.
 
 ## Status
-Largely functional but currently pre-alpha.
+Largely functional. APIs subject to change.
 
 ## Getting Started
 
@@ -12,7 +10,7 @@ Using `mai` requires three steps:
 
 * Selecting a data type to be your protocol's `Frame`, an actionable message.
 * Defining a `Codec` that knows how to read and write `Frame`s into byte buffers.
-* Specifying a `FrameHandler` to react to new connections, incoming `Frame`s and errors.
+* Specifying a `Handler` to react to new connections, incoming `Frame`s and errors.
 
 Buffer pooling, low-level `reads` and `writes` and `Token` management are handled by `mai`.
 
@@ -81,31 +79,33 @@ Define callbacks to handle byte stream events: connections, frames, timeouts, er
 ```rust
 use mai::*;
 
-impl FrameHandler<EchoClient> for EchoClientHandler {
-  fn on_ready(&mut self, stream: &mut FrameStream<EchoClient>) {
-    println!("Connected to {:?}, issued {:?}", stream.peer_addr(), stream.token());
+impl Handler<EchoClient> for EchoClientHandler {
+  fn on_ready(&mut self, context: &mut Context<EchoClient>) {
+    let stream = context.stream();
+    println!("Connected to {:?}", stream.peer_addr());
     let message: String = "Supercalifragilisticexpialidocious!".to_owned();
-    println!("Sending message...");
     stream.send(message);
-    stream.timeout_ms(55, 5_000);
   }
-  fn on_frame(&mut self, stream: &mut FrameStream<EchoClient>, message: String) {
-    println!("Received a message from {:?}/{:?}: '{}'", stream.peer_addr(), stream.token(), &message.trim_right());
+  fn on_frame(&mut self, stream: &mut Context<EchoClient>, message: String) {
+    let stream = context.stream();
+    println!("Received a message from {:?}: '{}'", stream.peer_addr(), &message.trim_right());
   }
   fn on_timeout(&mut self, timeout: usize) {
     println!("A timeout has occurred: {:?}", timeout);
   }
-  fn on_error(&mut self, stream: &mut FrameStream<EchoClient>, error: Error) {
-    println!("Error. {:?}/{:?}, {:?}", stream.peer_addr(), stream.token(), error);
+  fn on_error(&mut self, context: &mut Context<EchoClient>, error: &Error) {
+    let stream = context.stream();
+    println!("Error. {:?}, {:?}", stream.peer_addr(), error);
   }
-  fn on_closed(&mut self, stream: &FrameStream<EchoClient>) {
-    println!("Disconnected from {:?}/{:?}", stream.peer_addr(), stream.token());
+  fn on_closed(&mut self, stream: &Context<EchoClient>) {
+    let stream = context.stream();
+    println!("Disconnected from {:?}", stream.peer_addr());
   }
 }
 ```
 
 ### Get to work
-Create a `FrameEngine` and hand it any `mio` type that is `Evented`+`Read`+`Write`. Watch it go!
+Create a `ProtocolEngine` and hand it any `mio` type that is `Evented`+`Read`+`Write`. Watch it go!
 ```rust
 fn main() {
   // Create a TcpStream connected to `nc` running as an echo server
@@ -115,10 +115,14 @@ fn main() {
   let socket = TcpSocket::v4().unwrap();
   let (stream, _complete) = socket.connect(&address).unwrap();
   
-  // Hand the TcpStream off to our new `FrameEngine` configured to treat its
+  // Hand the TcpStream off to our new `ProtocolEngine` configured to treat its
   // byte streams as Echo clients.
-  let frame_engine: FrameEngineRemote<EchoClient> = mai::frame_engine(EchoCodec, EchoClientHandler).run();
-  frame_engine.manage(stream);
-  frame_engine.wait();
+  let protocol_engine: ProtocolEngine<EchoClient> = mai::protocol_engine(EchoClientHandler)
+    .with(InitialBufferSize(Kilobytes(32))
+    .with(InitialBufferPoolSize(16))
+    .with(MaxBufferPoolSize(128))
+    .build();
+  let token = protocol_engine.manage(stream);
+  let _ = protocol_engine.wait();
 }
 ```
