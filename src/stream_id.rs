@@ -17,4 +17,8 @@ impl StreamId {
   pub fn token(&self) -> Token {
     self.token
   }
+
+  pub fn id(&self) -> u32 {
+    self.id
+  }
 }
