@@ -201,7 +201,7 @@ impl <P: ?Sized> ProtocolEngine<P> where P: Protocol {
     let buffer_pool = lifeguard::pool()
         .with(StartingSize(buffer_pool_size))
         .with(MaxSize(max_buffer_pool_size))
-        .with(Supplier::new(move || Buffer::with_capacity(starting_buffer_size)))
+        .with(Supplier(move || Buffer::with_capacity(starting_buffer_size)))
         .build();
 
     let outbox_pool: Pool<Outbox<P::Frame>> = lifeguard::pool()
@@ -217,6 +217,10 @@ impl <P: ?Sized> ProtocolEngine<P> where P: Protocol {
       handler: handler,
       command_sender: command_sender
     }
+  }
+
+  pub fn channel(&mut self) -> MioSender<Command<P>> {
+    self.command_sender.clone()
   }
 
   pub fn run(mut self) -> io::Result<()> {
@@ -463,10 +467,10 @@ impl <P: ?Sized> ProtocolEngine<P> where P: Protocol {
     // or we've run out of frames
     let mut frame_count: usize = 0;
     let mut total_bytes_written: usize = 0;
+    let buffer_starting_size: usize = write_buffer.len();
     while outbox.len() > 0 {
       let frame: P::Frame = outbox.pop_front().expect("Outbox has len>0 but no messages.");
-      let buffer_to_fill = write_buffer.remaining();
-      match codec.encode(&frame, buffer_to_fill) {
+      match codec.encode(&frame, write_buffer.remaining()) {
         Ok(BytesWritten(bytes_written)) => {
           debug!("Serialized frame as {} bytes", bytes_written);
           frame_count += 1;
@@ -485,12 +489,11 @@ impl <P: ?Sized> ProtocolEngine<P> where P: Protocol {
           return Err(error);
         }
       };
+
+      let buffer_current_size: usize = buffer_starting_size + total_bytes_written;
+      debug!("Write buffer grew from {} bytes to {} bytes.", buffer_starting_size, buffer_current_size);
+      write_buffer.set_size(buffer_current_size);
     }
-    debug!("Serialized {} frames into the buffer.", frame_count);
-    let buffer_starting_size: usize = write_buffer.len();
-    let buffer_current_size: usize = buffer_starting_size + total_bytes_written;
-    debug!("Write buffer grew from {} bytes to {} bytes.", buffer_starting_size, buffer_current_size);
-    write_buffer.set_size(buffer_current_size);
     Ok(())
   }
 

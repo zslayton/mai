@@ -9,6 +9,10 @@ use mai::*;
 struct EchoCodec;
 struct EchoClient;
 struct EchoClientHandler;
+#[derive(Default)]
+struct EchoSession {
+  pub count : usize
+}
 
 impl Protocol for EchoClient {
   type ByteStream = TcpStream;
@@ -16,7 +20,7 @@ impl Protocol for EchoClient {
   type Codec = EchoCodec;
   type Handler = EchoClientHandler;
   type Timeout = usize;
-  type Session = ();
+  type Session = EchoSession;
 }
 
 impl Codec<String> for EchoCodec {
@@ -48,26 +52,28 @@ impl Codec<String> for EchoCodec {
 
 impl Handler<EchoClient> for EchoClientHandler {
   fn on_ready(&mut self, context: &mut Context<EchoClient>) {
-    context.engine().timeout_ms(55, 5_000);
     let mut stream = context.stream();
     println!("Connected to {:?}, issued {:?}",
              stream.peer_addr().unwrap(),
              stream.token());
-    let message: String = "Supercalifragilisticexpialidocious!
-                    Even though the sound of it
-                    Is something quite atrocious
-                    If you say it loud enough
-                    You\\'ll always sound precocious!
-                    Supercalifragilisticexpialidocious!\n".to_owned();
-    println!("Sending message...");
+    let message: String = "Supercalifragilisticexpialidocious!".to_owned();
+    //println!("Sending message...");
     stream.send(message);
   }
   fn on_frame(&mut self, context: &mut Context<EchoClient>, message: String) {
-    let stream = context.stream();
-    println!("Received a message from {:?}/{:?}: '{}'", 
+    use std::process;
+    let mut stream = context.stream();
+    stream.session().count += 1;
+    if stream.session().count >= 100_000 {
+      println!("Done echoing.");
+      process::exit(0);
+    }
+    stream.send(message);
+    /*println!("Received a message from {:?}/{:?}: '{}'", 
              stream.peer_addr().unwrap(),
              stream.token(),
              &message.trim_right());
+    */
   }
   fn on_timeout(&mut self, timeout: usize) {
     println!("A timeout occurred: #{:?}", timeout);

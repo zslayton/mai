@@ -213,8 +213,9 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
     }   
 
     // Get the outbox (from the pool if necessary) and add our frame
-    self.outbox(outbox_pool).push_back(frame);
-    debug!("New message in outbox.");
+    let mut outbox = self.outbox(outbox_pool);
+    outbox.push_back(frame);
+    debug!("Outbox has {} messages.", outbox.len());
     Ok(())
   }
 }

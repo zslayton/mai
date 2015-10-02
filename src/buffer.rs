@@ -96,7 +96,6 @@ impl Buffer {
     // Otherwise, shift the remaining bytes as far left as possible
     for i in num_consumed..num_in_use {
       let (left, right) = self.bytes.split_at_mut(i);
-      println!("i={}, left={:?}, right={:?}", i, left, right);
       left[i-num_consumed] = right[0];
     }
     self.truncate(num_in_use - num_consumed);
