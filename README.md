@@ -131,4 +131,4 @@ fn main() {
 
 Currently `mai` does not have a built-in way to manage incoming connections. This is [being worked on](https://github.com/zslayton/mai/issues/7).
 
-Running a server is conceptually a straightforward process: create a separate thread using mio to listen for incoming connections. Each time a client connection is avialable, pass the corresponding TcpStream to the ProtocolEngine running in the background.
+Running a server is conceptually a straightforward process: create a separate thread using mio to listen for incoming connections. Each time a client connection is avialable, pass the corresponding TcpStream to the ProtocolEngine running in the background. Until there is a formal API, you can get a channel to send commands to the `ProtocolEngine` instance by running `protocol_engine.command_sender.clone()` and sending a `Command::Manage(P::ByteStream)` message that contains the ByteStream you'd like it to manage.
