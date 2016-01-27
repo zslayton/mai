@@ -131,4 +131,4 @@ fn main() {
 
 Currently `mai` does not have a built-in way to manage incoming connections. This is [being worked on](https://github.com/zslayton/mai/issues/7).
 
-Creating a server is conceptually a straightforward process: create a separate thread using mio to listen for incoming connections. Each time a client connection is avialable, pass the corresponding TcpStream to the ProtocolEngine running on a separate thread.
+Running a server is conceptually a straightforward process: create a separate thread using mio to listen for incoming connections. Each time a client connection is avialable, pass the corresponding TcpStream to the ProtocolEngine running in the background.
