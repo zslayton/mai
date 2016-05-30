@@ -1,4 +1,6 @@
+use std;
 use std::result::Result;
+use std::convert::From;
 
 #[derive(Debug)]
 pub struct BytesRead(pub usize);
@@ -15,6 +17,17 @@ pub enum DecodingError {
 pub enum EncodingError {
   ProtocolError,
   InsufficientBuffer
+}
+
+impl From<std::io::Error> for EncodingError {
+    fn from(error: std::io::Error) -> EncodingError {
+        use std::io::ErrorKind::*;
+        match error.kind() {
+            WriteZero => return EncodingError::InsufficientBuffer,
+            _ => {}
+        }
+        panic!("IO Error occurred while encoding: {:?}", error);
+    }
 }
 
 pub struct DecodedFrame<F> {
@@ -36,7 +49,7 @@ impl <F> DecodedFrame<F> {
 pub type DecodingResult<F> = Result<DecodedFrame<F>, DecodingError>;
 pub type EncodingResult = Result<BytesWritten, EncodingError>;
 
-pub trait Codec<F> : Send {
+pub trait Codec<F> {
   fn new() -> Self;
   fn encode(&mut self, frame: &F, &mut [u8]) -> EncodingResult;
   fn decode(&mut self, &[u8]) -> DecodingResult<F>;

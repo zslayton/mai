@@ -17,9 +17,11 @@ mod handler;
 mod error;
 mod remote;
 mod token_bucket;
+mod timeout;
 mod stream_manager;
 mod settings;
 mod stream_id;
+mod stream_session;
 
 pub use stream_id::StreamId;
 pub use settings::*;
@@ -28,6 +30,8 @@ pub use protocol::Protocol;
 pub use error::Error;
 pub use buffer::Buffer;
 pub use handler::Handler;
+pub use context::EngineHandle;
+pub use context::StreamHandle;
 pub use context::Context;
 pub use remote::ProtocolEngineRemote;
 pub use evented_byte_stream::EventedByteStream;
@@ -40,7 +44,7 @@ pub use protocol_engine::Command;
 
 use mio::{EventLoop};
 
-pub fn protocol_engine<P>(handler: P::Handler) -> protocol_engine::ProtocolEngineBuilder<P> 
+pub fn protocol_engine<P>(handler: P::Handler) -> protocol_engine::ProtocolEngineBuilder<P>
   where P: Protocol {
   ProtocolEngineBuilder {
     handler: handler,
@@ -50,4 +54,3 @@ pub fn protocol_engine<P>(handler: P::Handler) -> protocol_engine::ProtocolEngin
     max_buffer_pool_size: 32,
   }
 }
-

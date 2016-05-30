@@ -5,6 +5,6 @@ authors = ["Zack Slayton <zack.slayton@gmail.com>"]
 
 [dependencies]
 lifeguard="0.5"
-mio="0.4"
+mio="0.5"
 slab="0.1"
 log="0.3"

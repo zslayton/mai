@@ -11,32 +11,34 @@ pub trait EventedByteStream : Evented + Read + Write + Send {
 impl <T> EventedByteStream for T where T: Evented + Read + Write + Send {
   fn read_into_buffer(&mut self, buffer: &mut Buffer) -> io::Result<usize> {
     debug!("Reading from EventedByteStream");
-    let mut total_bytes_read: usize = 0;
+    let mut bytes_available: usize = buffer.len(); // The buffer may have leftover data
     loop {
-      buffer.set_size(total_bytes_read);
+      buffer.set_size(bytes_available);
       let raw_buffer: &mut [u8] = buffer.remaining();
       if raw_buffer.len() == 0 {
         debug!("Buffer is full. Yielding.");
-        return Ok(total_bytes_read);
+        break;
       }
       debug!("Invoking read(), buffer has {} bytes free", raw_buffer.len());
       match self.read(raw_buffer) {
         Ok(bytes_read) => {
-          debug!("Read {} bytes", bytes_read);
+          bytes_available += bytes_read;
+          debug!("Read {} bytes, {} now available", bytes_read, bytes_available);
           if bytes_read == 0 {
-            return Ok(total_bytes_read);
+            break;
           }
-          total_bytes_read += bytes_read;
         },
         Err(error) => {
           if error.kind() == ErrorKind::WouldBlock {
             debug!("Read error WouldBlock, yielding.");
-            return Ok(total_bytes_read);
+            break;
           }
           return Err(error);
         }
       }
     }
+
+    return Ok(bytes_available);
   }
 
   fn write_from_buffer(&mut self, buffer: &mut Buffer) -> io::Result<usize> {

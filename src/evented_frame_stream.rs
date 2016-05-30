@@ -33,7 +33,6 @@ pub struct EventedFrameStream<P: ?Sized> where P: Protocol {
   pub read_buffer: Option<RcRecycled<Buffer>>,
   pub write_buffer: Option<RcRecycled<Buffer>>,
   pub outbox: Option<RcRecycled<Outbox<P::Frame>>>,
-  pub session: P::Session
 }
 
 impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
@@ -45,7 +44,6 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
       read_buffer: None,
       write_buffer: None,
       outbox: None,
-      session: Default::default(),
     }
   }
 
@@ -76,21 +74,21 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
 
     if drop_read_buffer {
       debug!("Read buffer is empty. Releasing it to the pool.");
-      self.read_buffer = None;   
+      self.read_buffer = None;
     }
     if drop_write_buffer {
       debug!("Write buffer is empty. Releasing it to the pool.");
-      self.write_buffer = None;   
+      self.write_buffer = None;
     }
     if drop_outbox {
       debug!("Outbox is empty. Releasing it to the pool.");
-      self.write_buffer = None;   
+      self.write_buffer = None;
     }
   }
 
   pub fn has_bytes_to_write(&self) -> bool {
     // Has bytes in the outbound buffer waiting to be written...
-    (!self.write_buffer.is_none() && self.write_buffer.as_ref().unwrap().len() > 0) 
+    (!self.write_buffer.is_none() && self.write_buffer.as_ref().unwrap().len() > 0)
     // or frames waiting to be serialized and written
         || (!self.outbox.is_none() && self.outbox.as_ref().unwrap().len() > 0)
   }
@@ -155,7 +153,7 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
   }
 
   pub fn register_interest_in_writing (
-    &self, 
+    &self,
     event_loop: &mut EventLoop<ProtocolEngine<P>>,
     token: Token) -> io::Result<()> {
       debug!("Registering interest in writable event.");
@@ -166,10 +164,10 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
         PollOpt::level()
       )
   }
-  
+
   pub fn deregister_interest_in_writing (
-    &self, 
-    event_loop: 
+    &self,
+    event_loop:
     &mut EventLoop<ProtocolEngine<P>>,
     token: Token) -> io::Result<()> {
       debug!("De-registering interest in writable event.");
@@ -178,7 +176,7 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
       event_loop.reregister(
         &self.stream,
         token,
-        interests, 
+        interests,
         PollOpt::level()
       )
   }
@@ -187,6 +185,7 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
     &mut self,
     event_loop: &mut EventLoop<ProtocolEngine<P>>,
     token: Token,
+    session: &mut P::Session,
     outbox_pool: &mut Pool<Outbox<P::Frame>>,
     command_sender: &mut MioSender<Command<P>>,
     handler: &mut P::Handler,
@@ -195,7 +194,7 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
         debug!("{:?} encountered an i/o error. Setting state to 'Done'.", token);
         self.state = Done;
       } //TODO: Other non-fatal error types should move state to 'ShuttingDown'
-      let context = &mut Context::new(event_loop, self, outbox_pool, command_sender, token);
+      let context = &mut Context::new(event_loop, self, session, outbox_pool, command_sender, token);
       handler.on_error(context, error);
   }
 
@@ -205,12 +204,12 @@ impl <P: ?Sized> EventedFrameStream<P> where P: Protocol {
     token: Token,
     outbox_pool: &mut Pool<Outbox<P::Frame>>,
     frame: P::Frame) -> io::Result<()> {
-  
+
     // If we weren't waiting to write before this, register interest
     // in case we had deregistered it previously.
-    if !self.has_bytes_to_write() { 
+    if !self.has_bytes_to_write() {
       try!(self.register_interest_in_writing(event_loop, token))
-    }   
+    }
 
     // Get the outbox (from the pool if necessary) and add our frame
     let mut outbox = self.outbox(outbox_pool);

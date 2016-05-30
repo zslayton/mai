@@ -26,8 +26,8 @@ impl <P: ?Sized> ProtocolEngineRemote<P> where
     let _ = self.command_sender.send(Command::Send(token, frame));
   }
 
-  pub fn manage(&self, evented_byte_stream: P::ByteStream) {
-    let _ = self.command_sender.send(Command::Manage(evented_byte_stream));
+  pub fn manage(&self, evented_byte_stream: P::ByteStream, session: P::Session) {
+    let _ = self.command_sender.send(Command::Manage(evented_byte_stream, session));
   }
 
   pub fn shutdown(&self) {

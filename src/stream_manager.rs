@@ -4,11 +4,11 @@ use slab::Index;
 use mio::Token;
 
 use Protocol;
-use EventedFrameStream;
 use ::token_bucket::TokenBucket;
+use stream_session::StreamSession;
 
 pub struct StreamManager<P: ?Sized> where P: Protocol {
-  streams: BTreeMap<usize, EventedFrameStream<P>>,
+  streams: BTreeMap<usize, StreamSession<P>>,
   token_bucket: TokenBucket,
 }
 
@@ -20,7 +20,7 @@ impl <P: ?Sized> StreamManager <P> where P: Protocol {
     }
   }
 
-  pub fn get_mut(&mut self, token: Token) -> Option<&mut EventedFrameStream<P>> {
+  pub fn get_mut(&mut self, token: Token) -> Option<&mut StreamSession<P>> {
     self.streams.get_mut(&token.as_usize())
   }
 
@@ -31,13 +31,13 @@ impl <P: ?Sized> StreamManager <P> where P: Protocol {
     Index::from_usize(self.streams.len())
   }
 
-  pub fn insert(&mut self, efs: EventedFrameStream<P>) -> Token {
+  pub fn insert(&mut self, stream_session: StreamSession<P>) -> Token {
     let next_token = self.get_next_token();
-    self.streams.insert(next_token.as_usize(), efs);
+    self.streams.insert(next_token.as_usize(), stream_session);
     next_token
   }
 
-  pub fn remove(&mut self, token: Token) -> Option<EventedFrameStream<P>> {
+  pub fn remove(&mut self, token: Token) -> Option<StreamSession<P>> {
     self.token_bucket.put(token);
     self.streams.remove(&token.as_usize())
   }
